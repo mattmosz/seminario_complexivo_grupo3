@@ -1,6 +1,6 @@
 # seminario_complexivo_grupo3
 
-**Nombre Caso de Estdio**
+**Nombre Caso de Estudio**
 
 Análisis de Sentimiento y Extracción de Tópicos en Reseñas de Hoteles Europeos. 
 
@@ -8,9 +8,9 @@ Análisis de Sentimiento y Extracción de Tópicos en Reseñas de Hoteles Europe
 
 **Integrantes**
 
-Matías Marcelo Mosquera Báez
-Francisco Javier Quinteros Andrade
-José Xavier Torres Cuenca
+- Matías Marcelo Mosquera Báez  
+- Francisco Javier Quinteros Andrade  
+- José Xavier Torres Cuenca
 
 ---
 
