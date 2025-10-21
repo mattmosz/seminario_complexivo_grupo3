@@ -106,6 +106,8 @@ st.markdown("""
         border-radius: 12px;
         margin-bottom: 1.5rem;
         box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        text-align: center;
+        border-bottom: 4px solid #E91E8C;
     }
     
     .main-title h1 {
@@ -113,12 +115,9 @@ st.markdown("""
         font-size: 1.8rem;
         font-weight: 800;
         margin: 0;
-        background: linear-gradient(135deg, #1E3A5F, #E91E8C);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
+        text-align: center;
     }
-    
+        
     /* KPIs Grid Mejorado */
     .kpi-container {
         display: grid;
