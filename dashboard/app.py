@@ -1,6 +1,7 @@
 # dashboard_streamlit/app.py
 import os
 from io import BytesIO
+import requests
 
 import numpy as np
 import pandas as pd
@@ -41,9 +42,9 @@ def run_analyze_cli(sample: int = 0, stream: bool = True, chunk: int = 100_000, 
     Devuelve (ok, log).
     """
     if not RAW_PATH.exists():
-        return False, f"⚠️ No se encontró el RAW en: {RAW_PATH}"
+        return False, f" No se encontró el RAW en: {RAW_PATH}"
     if not ANALYZE_PY.exists():
-        return False, f"⚠️ No se encontró analyze.py en: {ANALYZE_PY}"
+        return False, f" No se encontró analyze.py en: {ANALYZE_PY}"
 
     cmd = [sys.executable, str(ANALYZE_PY)]
     if stream: 
@@ -61,7 +62,7 @@ def run_analyze_cli(sample: int = 0, stream: bool = True, chunk: int = 100_000, 
         log = res.stdout + "\n" + res.stderr
         return ok, log
     except Exception as e:
-        return False, f"❌ Error al ejecutar analyze.py: {e}"
+        return False, f" Error al ejecutar analyze.py: {e}"
 
 # ======================
 # 2. CSS Profesional Ejecutivo
@@ -422,54 +423,73 @@ PALETTE = {
     "neutro": "#C8C8C8",
     "negativo": "#1E3A5F",
 }
-PLOTLY_TEMPLATE = "plotly_white"
+PLOTLY_TEMPLATE = "plotly"
 
 # ======================
-# 4. Carga de Datos con Manejo Robusto de Nulos
+# 4. Carga de Datos (Modo Local + API Comentada)
 # ======================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "hotel_reviews_processed.csv"))
 
+# --- Configuración para modo dual ---
+BASE_API_URL = None  # Ejemplo: "http://localhost:8000/v1"
+TOKEN = None          # Ejemplo: "tu_token_si_usas_auth"
+
 @st.cache_data(show_spinner="🔄 Cargando datos...")
-def load_data(path: str) -> pd.DataFrame:
-    """Carga datos con manejo robusto de encoding y valores nulos."""
-    try:
-        df = pd.read_csv(path, encoding="utf-8")
-    except UnicodeDecodeError:
-        df = pd.read_csv(path, encoding="latin-1")
-    except FileNotFoundError:
-        st.error(f"❌ Archivo no encontrado: {path}")
-        st.stop()
-    
-    # Verificar columnas esperadas
+def load_data() -> pd.DataFrame:
+    """Carga datos desde API (si está activa) o CSV local por defecto."""
+
+    # --- 1) Intentar API ---
+    if BASE_API_URL:
+        try:
+            headers = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
+            res = requests.get(f"{BASE_API_URL}/reviews", headers=headers, timeout=10)
+            if res.status_code == 200:
+                st.success(" Datos cargados desde la API")
+                df = pd.DataFrame(res.json())
+            else:
+                st.warning(f" API respondió con {res.status_code}. Se usará CSV local.")
+                df = pd.read_csv(DATA_PATH, encoding="utf-8")
+        except Exception as e:
+            st.warning(f" Error conectando a la API: {e}. Se usará CSV local.")
+            df = pd.read_csv(DATA_PATH, encoding="utf-8")
+
+    # --- 2) CSV local (por defecto actual) ---
+    else:
+        try:
+            df = pd.read_csv(DATA_PATH, encoding="utf-8")
+            st.info(" Datos cargados desde el CSV local")
+        except UnicodeDecodeError:
+            df = pd.read_csv(DATA_PATH, encoding="latin-1")
+        except FileNotFoundError:
+            st.error(f" Archivo no encontrado: {DATA_PATH}")
+            st.stop()
+
+    # --- 3) Limpieza básica y manejo de nulos ---
     expected = {
         "Hotel_Name", "Reviewer_Nationality", "Positive_Review", "Negative_Review",
         "review_text", "sentiment_label", "Reviewer_Score", "lat", "lng"
     }
     miss = expected - set(df.columns)
     if miss:
-        st.error(f"⚠️ Faltan columnas en el dataset: {sorted(miss)}")
+        st.error(f" Faltan columnas en el dataset: {sorted(miss)}")
         st.stop()
-    
-    # Limpieza y manejo de nulos
+
     df["Reviewer_Score"] = pd.to_numeric(df["Reviewer_Score"], errors="coerce")
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lng"] = pd.to_numeric(df["lng"], errors="coerce")
-    
-    # Rellenar valores nulos en campos de texto
+
     df["Hotel_Name"] = df["Hotel_Name"].fillna("Hotel Desconocido")
     df["Reviewer_Nationality"] = df["Reviewer_Nationality"].fillna("Sin Especificar")
     df["Positive_Review"] = df["Positive_Review"].fillna("")
     df["Negative_Review"] = df["Negative_Review"].fillna("")
     df["review_text"] = df["review_text"].fillna("")
     df["sentiment_label"] = df["sentiment_label"].fillna("neutro")
-    
-    # Rellenar scores nulos con la mediana
+
     if df["Reviewer_Score"].isna().any():
         median_score = df["Reviewer_Score"].median()
         df["Reviewer_Score"] = df["Reviewer_Score"].fillna(median_score)
-    
-    # Traducir nombres de columnas al español
+
     df = df.rename(columns={
         "Hotel_Name": "Nombre del Hotel",
         "Reviewer_Nationality": "Nacionalidad del Revisor",
@@ -479,16 +499,17 @@ def load_data(path: str) -> pd.DataFrame:
         "sentiment_label": "Etiqueta de Sentimiento",
         "Reviewer_Score": "Puntuación del Revisor"
     })
-    
+
     return df
 
-# Cargar datos
+# --- Llamar a la función de carga ---
 try:
-    df = load_data(DATA_PATH)
+    df = load_data()
     total_dataset_reviews = len(df)
 except Exception as e:
-    st.error(f"❌ Error al cargar datos: {e}")
+    st.error(f" Error al cargar datos: {e}")
     st.stop()
+
 
 # ======================
 # 5. Sidebar (Filtros y Controles)
@@ -553,10 +574,10 @@ with st.sidebar:
                 ok, log = run_analyze_cli(sample=sample_n, stream=stream, chunk=chunk, topics=topics)
                 st.code(log[-4000:], language="bash")
                 if ok and PROCESSED_PATH.exists():
-                    status.update(label="✅ Listo", state="complete")
+                    status.update(label=" Listo", state="complete")
                     st.success("CSV procesado generado/actualizado.")
                 else:
-                    status.update(label="❌ Falló", state="error")
+                    status.update(label=" Falló", state="error")
                     st.error("Revisa el log para más detalles.")
 
         def _safe_rerun():
@@ -655,38 +676,75 @@ if filtered_reviews == 0:
 # 9. Funciones de Visualización
 # ======================
 def fig_area_por_categoria(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
-    """Gráfico de área por categorías de puntuación."""
-    bins = pd.cut(data["Puntuación del Revisor"], bins=[0, 4, 7, 10], labels=["Bajo", "Medio", "Alto"])
-    
+    """Gráfico de área por categorías de puntuación (estable, sin px.area)."""
+    order = ["Bajo", "Medio", "Alto"]
+    bins = pd.cut(
+        data["Puntuación del Revisor"],
+        bins=[0, 4, 7, 10],
+        labels=order,
+        include_lowest=True,
+        right=True
+    )
+
+    fig = go.Figure()
+
     if vader_enabled:
-        tmp = pd.DataFrame({
-            "Categoría": bins,
-            "Sentimiento": data["Etiqueta de Sentimiento"]
-        })
-        area = tmp.value_counts().reset_index(name="Cantidad").sort_values(["Categoría", "Sentimiento"])
-        
-        fig = px.area(
-            area, x="Categoría", y="Cantidad", color="Sentimiento",
-            color_discrete_map=PALETTE, template=PLOTLY_TEMPLATE
+        # Tabla pivote: filas = categoría, columnas = sentimiento
+        tmp = (
+            pd.DataFrame({"Categoría": bins, "Sentimiento": data["Etiqueta de Sentimiento"]})
+            .value_counts()
+            .reset_index(name="Cantidad")
         )
+        pivot = (
+            tmp.pivot(index="Categoría", columns="Sentimiento", values="Cantidad")
+               .reindex(order)
+               .fillna(0)
+        )
+
+        # Asegura columnas en orden (si faltan, las crea en 0)
+        for senti in ["negativo", "neutro", "positivo"]:
+            if senti not in pivot.columns:
+                pivot[senti] = 0
+
+        # Añade trazas apiladas (stacked area)
+        fig.add_trace(go.Scatter(
+            x=order, y=pivot["negativo"].values,
+            name="negativo", mode="lines",
+            line=dict(width=1, color=PALETTE["negativo"]),
+            stackgroup="one", groupnorm=""  # "" = valores absolutos
+        ))
+        fig.add_trace(go.Scatter(
+            x=order, y=pivot["neutro"].values,
+            name="neutro", mode="lines",
+            line=dict(width=1, color=PALETTE["neutro"]),
+            stackgroup="one"
+        ))
+        fig.add_trace(go.Scatter(
+            x=order, y=pivot["positivo"].values,
+            name="positivo", mode="lines",
+            line=dict(width=1, color=PALETTE["positivo"]),
+            stackgroup="one"
+        ))
+
     else:
-        tmp = pd.DataFrame({"Categoría": bins})
-        area = tmp.value_counts().reset_index(name="Cantidad").sort_values("Categoría")
-        
-        fig = px.area(
-            area, x="Categoría", y="Cantidad",
-            template=PLOTLY_TEMPLATE
-        )
-        fig.update_traces(fillcolor="rgba(30, 58, 95, 0.3)", line_color="#1E3A5F")
-    
+        counts = pd.Series(bins).value_counts().reindex(order).fillna(0)
+        fig.add_trace(go.Scatter(
+            x=order, y=counts.values.astype(float),
+            name="Cantidad", mode="lines",
+            line=dict(width=2, color=PALETTE["negativo"]),
+            fill="tozeroy"
+        ))
+
     fig.update_layout(
+        template=PLOTLY_TEMPLATE if PLOTLY_TEMPLATE else "plotly",
         title="Análisis por Categorías de Puntuación",
         title_font=dict(size=14, color="#1E3A5F", family="Arial Black"),
         margin=dict(l=20, r=20, t=50, b=20),
         height=300,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    fig.update_xaxes(categoryorder="array", categoryarray=["Bajo", "Medio", "Alto"])
+    fig.update_xaxes(categoryorder="array", categoryarray=order, title="")
+    fig.update_yaxes(title="Cantidad")
     return fig
 
 def fig_trend(data: pd.DataFrame) -> go.Figure:
@@ -1161,11 +1219,11 @@ with tab_stats:
     """, unsafe_allow_html=True)
 
     if data_health >= 85:
-        st.success("✅ Excelente calidad de datos — el dataset está listo para análisis confiables.")
+        st.success(" Excelente calidad de datos — el dataset está listo para análisis confiables.")
     elif data_health >= 70:
-        st.warning("⚠️ Calidad de datos aceptable — podrías mejorar completitud o texto.")
+        st.warning(" Calidad de datos aceptable — podrías mejorar completitud o texto.")
     else:
-        st.error("❌ Baja calidad de datos — revisa nulos o reseñas vacías.")
+        st.error(" Baja calidad de datos — revisa nulos o reseñas vacías.")
 
 # ======================
 # 11. Footer
