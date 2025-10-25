@@ -65,7 +65,7 @@ def sentiment_chunked(df, chunk_size=100_000, stream_path: Path | None = None):
         else:
             outs.append(chunk_out)
 
-        print(f"   🔹 bloque {start:,}–{end:,} listo")
+        print(f"   bloque {start:,}–{end:,} listo")
 
     return None if stream_path else pd.concat(outs, ignore_index=True)
 
