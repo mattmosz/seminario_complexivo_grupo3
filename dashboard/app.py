@@ -79,7 +79,6 @@ st.markdown("""
     /* Ocultar elementos de Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     
     /* Fondo principal */
     .stApp {
