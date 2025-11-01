@@ -3,6 +3,49 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 
 
+def get_extended_stop_words():
+    """
+    Obtiene una lista extendida de stop words combinando sklearn y nltk.
+    """
+    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+    
+    # Lista base de sklearn
+    stop_words = set(ENGLISH_STOP_WORDS)
+    
+    # Intentar agregar stop words de NLTK
+    try:
+        import nltk
+        try:
+            nltk.data.find('corpora/stopwords')
+        except LookupError:
+            nltk.download('stopwords', quiet=True)
+        
+        from nltk.corpus import stopwords
+        nltk_stops = set(stopwords.words('english'))
+        stop_words.update(nltk_stops)
+    except:
+        pass  # Si falla, solo usar sklearn
+    
+    # Agregar palabras adicionales comunes en reseñas de hoteles
+    custom_stops = {
+        'hotel', 'room', 'stay', 'stayed', 'night', 'nights',
+        'booking', 'booked', 'book', 'reservation', 'reserved',
+        'staff', 'service', 'location', 'place', 'time',
+        'good', 'great', 'nice', 'bad', 'terrible',
+        'like', 'really', 'just', 'got', 'went', 'come', 'came',
+        'would', 'could', 'should', 'also', 'well', 'even',
+        'however', 'although', 'though', 'still', 'yet',
+        'positive', 'negative', 'review', 'reviews',
+        'said', 'told', 'asked', 'did', 'does', 'done',
+        'thing', 'things', 'way', 'ways', 'day', 'days',
+        'bit', 'lot', 'lots', 'much', 'many', 'very', 'quite',
+        'nbsp'  # Artefacto HTML común
+    }
+    stop_words.update(custom_stops)
+    
+    return list(stop_words)
+
+
 def extract_topics(df: pd.DataFrame,
                    text_column: str = "review_text",
                    n_topics: int = 8,
@@ -20,14 +63,19 @@ def extract_topics(df: pd.DataFrame,
     # Preparar textos
     texts = df[text_column].fillna("").astype(str).tolist()
     
+    # Obtener stop words extendidas
+    extended_stops = get_extended_stop_words()
+    
     # Vectorizar
     print("   Vectorizando textos...")
+    print(f"   Usando {len(extended_stops)} stop words...")
     vectorizer = CountVectorizer(
-        stop_words="english",
+        stop_words=extended_stops,
         lowercase=True,
         max_df=max_df,
         min_df=min_df,
-        max_features=max_features
+        max_features=max_features,
+        token_pattern=r'\b[a-z]{3,}\b'  # Solo palabras de 3+ letras
     )
     X = vectorizer.fit_transform(texts)
     
@@ -78,13 +126,17 @@ def assign_topics_to_documents(df: pd.DataFrame,
     df_out = df.copy()
     texts = df_out[text_column].fillna("").astype(str).tolist()
     
+    # Obtener stop words extendidas
+    extended_stops = get_extended_stop_words()
+    
     # Vectorizar
     vectorizer = CountVectorizer(
-        stop_words="english",
+        stop_words=extended_stops,
         lowercase=True,
         max_df=max_df,
         min_df=min_df,
-        max_features=max_features
+        max_features=max_features,
+        token_pattern=r'\b[a-z]{3,}\b'  # Solo palabras de 3+ letras
     )
     X = vectorizer.fit_transform(texts)
     

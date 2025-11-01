@@ -207,8 +207,36 @@ st.markdown("""
         align-items: center;
         justify-content: center;
         margin-bottom: 1rem;
-        font-size: 1.5rem;
         box-shadow: 0 4px 10px rgba(233,30,140,0.3);
+        position: relative;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+    }
+    
+    .kpi-icon-circle.dataset::before {
+        content: '📊';
+        font-size: 24px;
+    }
+    
+    .kpi-icon-circle.filtered::before {
+        content: '✓';
+        font-size: 28px;
+    }
+    
+    .kpi-icon-circle.star::before {
+        content: '★';
+        font-size: 26px;
+    }
+    
+    .kpi-icon-circle.check::before {
+        content: '✓';
+        font-size: 28px;
+    }
+    
+    .kpi-icon-circle.hotel::before {
+        content: '🏢';
+        font-size: 24px;
     }
     
     .kpi-value {
@@ -658,31 +686,31 @@ st.markdown(f"""
 <div class="kpi-container">
     <div class="kpi-card">
         <div class="kpi-badge">DATASET</div>
-        <div class="kpi-icon-circle">📚</div>
+        <div class="kpi-icon-circle dataset"></div>
         <div class="kpi-value">{total_dataset_reviews:,}</div>
         <div class="kpi-label">Total Reseñas</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-badge">FILTRADO</div>
-        <div class="kpi-icon-circle">📝</div>
+        <div class="kpi-icon-circle filtered"></div>
         <div class="kpi-value">{filtered_reviews:,}</div>
         <div class="kpi-label">Reseñas Filtradas</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-badge">PROMEDIO</div>
-        <div class="kpi-icon-circle">⭐</div>
+        <div class="kpi-icon-circle star"></div>
         <div class="kpi-value">{avg_score:.1f}</div>
         <div class="kpi-label">Puntuación</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-badge">{'POSITIVO' if use_vader else 'N/A'}</div>
-        <div class="kpi-icon-circle">✓</div>
+        <div class="kpi-icon-circle check"></div>
         <div class="kpi-value">{pos_pct:.1f}%</div>
         <div class="kpi-label">Satisfacción</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-badge">HOTELES</div>
-        <div class="kpi-icon-circle">🏨</div>
+        <div class="kpi-icon-circle hotel"></div>
         <div class="kpi-value">{unique_hotels}</div>
         <div class="kpi-label">Únicos</div>
     </div>
@@ -913,24 +941,61 @@ def sample_text(series: pd.Series, max_chars: int = 60000, fast: bool = True) ->
     arr = series.dropna().astype(str).sample(n, random_state=42).tolist()
     return " ".join(arr)[:max_chars]
 
+def get_extended_stopwords():
+    """
+    Obtiene una lista extendida de stop words combinando múltiples fuentes.
+    """
+    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+    
+    # Lista base de sklearn
+    stop_words = set(ENGLISH_STOP_WORDS)
+    
+    # Intentar agregar stop words de NLTK
+    try:
+        import nltk
+        try:
+            nltk.data.find('corpora/stopwords')
+        except LookupError:
+            nltk.download('stopwords', quiet=True)
+        
+        from nltk.corpus import stopwords
+        nltk_stops = set(stopwords.words('english'))
+        stop_words.update(nltk_stops)
+    except:
+        pass  # Si falla, solo usar sklearn
+    
+    # Agregar palabras adicionales comunes en reseñas de hoteles
+    custom_stops = {
+        'hotel', 'room', 'stay', 'stayed', 'night', 'nights',
+        'booking', 'booked', 'book', 'reservation', 'reserved',
+        'staff', 'service', 'location', 'place', 'time',
+        'good', 'great', 'nice', 'bad', 'terrible',
+        'like', 'really', 'just', 'got', 'went', 'come', 'came',
+        'would', 'could', 'should', 'also', 'well', 'even',
+        'however', 'although', 'though', 'still', 'yet',
+        'positive', 'negative', 'review', 'reviews',
+        'said', 'told', 'asked', 'did', 'does', 'done',
+        'thing', 'things', 'way', 'ways', 'day', 'days',
+        'bit', 'lot', 'lots', 'much', 'many', 'very', 'quite',
+        'nbsp', 'one', 'two', 'nothing', 'everything',
+        'the', 'and', 'was', 'were', 'that', 'this', 'for', 'with',
+        'not', 'but', 'are', 'had', 'have', 'has', 'been', 'there',
+        'all', 'from', 'they', 'which', 'when', 'where', 'who',
+        'our', 'we', 'you', 'can', 'will', 'would', 'could',
+        'no', 'yes', 'ok', 'okay', 'fine'
+    }
+    stop_words.update(custom_stops)
+    
+    return stop_words
+
+
 def wc_image(text: str, colormap: str) -> BytesIO:
-    """Genera imagen de nube de palabras."""
+    """Genera imagen de nube de palabras con stop words extendidas."""
     if not text.strip():
         text = "sin datos"
     
-    # Stopwords en español e inglés
-    stopwords_custom = {
-        # Español
-        'hotel', 'habitación', 'habitacion', 'muy', 'pero', 'más', 'mas', 'como', 'para',
-        'con', 'una', 'del', 'las', 'los', 'por', 'que', 'está', 'esta', 'todo', 'bien',
-        'solo', 'muy', 'fue', 'nos', 'sin', 'hay', 'había', 'habia', 'tienen', 'todos',
-        'todas', 'era', 'estar', 'sido', 'está', 'estaba', 'porque', 'desde', 'hasta',
-        # Inglés
-        'hotel', 'room', 'stay', 'stayed', 'would', 'could', 'one', 'also', 'nothing', 
-        'no', 'negative', 'the', 'and', 'was', 'were', 'that', 'this', 'for', 'with',
-        'not', 'but', 'are', 'had', 'have', 'has', 'been', 'there', 'very', 'all',
-        'from', 'they', 'which', 'when', 'where', 'who', 'our', 'we', 'you', 'can'
-    }
+    # Obtener stop words extendidas
+    stopwords_extended = get_extended_stopwords()
     
     wc = WordCloud(
         width=1600,
@@ -939,7 +1004,7 @@ def wc_image(text: str, colormap: str) -> BytesIO:
         colormap=colormap,
         max_words=150,
         relative_scaling=0.5,
-        stopwords=stopwords_custom,
+        stopwords=stopwords_extended,
         min_font_size=10,
         max_font_size=100,
         prefer_horizontal=0.7
