@@ -79,7 +79,6 @@ st.markdown("""
     /* Ocultar elementos de Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     
     /* Fondo principal */
     .stApp {
@@ -412,6 +411,28 @@ st.markdown("""
             font-size: 2rem;
         }
     }
+    /* Forzar sidebar siempre visible y sin colapsar */
+[data-testid="stSidebar"] {
+  visibility: visible !important;
+  transform: none !important;
+  opacity: 1 !important;
+}
+
+/* Evitar que Streamlit lo colapse en breakpoints pequeños */
+@media (max-width: 768px) {
+  [data-testid="stSidebar"] {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    z-index: 999 !important;
+  }
+  /* Deja espacio al contenido principal para que no quede debajo */
+  .stApp > div:nth-child(1) .block-container {
+    margin-left: 18rem !important; /* ajusta al ancho real del sidebar */
+  }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
