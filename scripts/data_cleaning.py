@@ -1,7 +1,3 @@
-# scripts/data_cleaning.py
-"""
-Módulo para limpieza y preparación de datos del dataset de reseñas.
-"""
 import re
 import pandas as pd
 
