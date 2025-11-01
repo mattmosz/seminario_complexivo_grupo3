@@ -1,6 +1,153 @@
 import re
+import unicodedata
 import pandas as pd
 
+# ============================================================
+# 0) Utilidades para normalizar países (ISO-like, estricto)
+# ============================================================
+
+# Lista de ~195 países (nombres cortos comunes en inglés)
+VALID_COUNTRIES = {
+    "Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Australia",
+    "Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin",
+    "Bhutan","Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi",
+    "Cabo Verde","Cambodia","Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia","Comoros",
+    "Congo","Democratic Republic of the Congo","Costa Rica","Cote d'Ivoire","Croatia","Cuba","Cyprus","Czechia",
+    "Denmark","Djibouti","Dominica","Dominican Republic","Ecuador","Egypt","El Salvador","Equatorial Guinea","Eritrea",
+    "Estonia","Eswatini","Ethiopia","Fiji","Finland","France","Gabon","Gambia","Georgia","Germany","Ghana","Greece",
+    "Grenada","Guatemala","Guinea","Guinea-Bissau","Guyana","Haiti","Honduras","Hungary","Iceland","India","Indonesia",
+    "Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kiribati","Kuwait",
+    "Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg",
+    "Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania","Mauritius","Mexico",
+    "Micronesia","Moldova","Monaco","Mongolia","Montenegro","Morocco","Mozambique","Myanmar","Namibia","Nauru","Nepal",
+    "Netherlands","New Zealand","Nicaragua","Niger","Nigeria","North Korea","North Macedonia","Norway","Oman","Pakistan",
+    "Palau","Panama","Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Qatar","Romania","Russia",
+    "Rwanda","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Samoa","San Marino",
+    "Sao Tome and Principe","Saudi Arabia","Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Slovakia",
+    "Slovenia","Solomon Islands","Somalia","South Africa","South Korea","South Sudan","Spain","Sri Lanka","Sudan",
+    "Suriname","Sweden","Switzerland","Syria","Tajikistan","Tanzania","Thailand","Timor-Leste","Togo","Tonga",
+    "Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Tuvalu","Uganda","Ukraine","United Arab Emirates",
+    "United Kingdom","United States","Uruguay","Uzbekistan","Vanuatu","Vatican City","Venezuela","Vietnam","Yemen",
+    "Zambia","Zimbabwe"
+}
+
+# Territorios / subnacionales / alias → país
+TERRITORY_TO_COUNTRY = {
+    # US & UK & NL & FR territories + subnacionales frecuentes
+    "usa":"United States","u.s.a":"United States","us":"United States","america":"United States",
+    "puerto rico":"United States","guam":"United States","american samoa":"United States",
+    "us virgin islands":"United States","united states of america":"United States",
+    "england":"United Kingdom","scotland":"United Kingdom","wales":"United Kingdom",
+    "northern ireland":"United Kingdom","uk":"United Kingdom","u.k.":"United Kingdom","great britain":"United Kingdom",
+    "britain":"United Kingdom","gibraltar":"United Kingdom","isle of man":"United Kingdom","jersey":"United Kingdom","guernsey":"United Kingdom",
+    "holland":"Netherlands","the netherlands":"Netherlands","curaçao":"Netherlands","curacao":"Netherlands",
+    "bonaire":"Netherlands","sint maarten":"Netherlands","aruba":"Netherlands",
+    "reunion":"France","réunion":"France","martinique":"France","guadeloupe":"France","mayotte":"France",
+    "new caledonia":"France","french polynesia":"France","saint martin":"France","st martin":"France","saint barthelemy":"France",
+    "faroe islands":"Denmark","greenland":"Denmark",
+    # China / SAR
+    "hong kong":"China","hong kong sar":"China","macau":"China","macao":"China","people's republic of china":"China","prc":"China",
+    # Korea
+    "republic of korea":"South Korea","korea, republic of":"South Korea","south korea":"South Korea","korea":"South Korea",
+    "democratic people's republic of korea":"North Korea","dprk":"North Korea","north korea":"North Korea",
+    # Czechia / others
+    "czech republic":"Czechia","russian federation":"Russia","viet nam":"Vietnam","uae":"United Arab Emirates","u.a.e.":"United Arab Emirates",
+    "iran, islamic republic of":"Iran","syrian arab republic":"Syria","tanzania, united republic of":"Tanzania",
+    "lao people's democratic republic":"Laos","moldova, republic of":"Moldova","bolivia, plurinational state of":"Bolivia",
+    "venezuela, bolivarian republic of":"Venezuela","brunei darussalam":"Brunei",
+    # Congo variants
+    "dr congo":"Democratic Republic of the Congo","congo (kinshasa)":"Democratic Republic of the Congo",
+    "democratic republic of congo":"Democratic Republic of the Congo",
+    "congo (brazzaville)":"Congo","republic of the congo":"Congo",
+    # Ivory Coast
+    "cote d’ivoire":"Cote d'Ivoire","côte d’ivoire":"Cote d'Ivoire","cote d'ivoire":"Cote d'Ivoire","côte d'ivoire":"Cote d'Ivoire",
+    # Otros comunes
+    "myanmar (burma)":"Myanmar","eswatini (swaziland)":"Eswatini","swaziland":"Eswatini",
+    "cape verde":"Cabo Verde","east timor":"Timor-Leste","burma":"Myanmar",
+    # No-país / región / basura → None (filtrar)
+    "europe": None, "european union": None, "schengen": None, "other": None, "unknown": None,
+    "nan": None, "-": None, "—": None
+}
+
+def _slug(s: str) -> str:
+    """Minúsculas, sin acentos, solo letras/espacios, colapsa espacios."""
+    s = s or ""
+    s = s.strip()
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    s = s.lower()
+    s = re.sub(r"[^a-z' ]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def canonical_country(raw: str):
+    """
+    Normaliza 'nacionalidad/país' a un país ISO corto (VALID_COUNTRIES).
+    Retorna None si no es un país (región/otro/lixo).
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    s = _slug(raw)
+
+    # 1) Mapeo directo de territorios/alias
+    if s in TERRITORY_TO_COUNTRY:
+        return TERRITORY_TO_COUNTRY[s]
+
+    # 2) Heurísticas de frases tipo 'republic of ...'
+    s2 = (
+        s.replace("islamic republic of ", "")
+         .replace("republic of ", "")
+         .replace("federative republic of ", "")
+         .replace("federation of ", "")
+         .replace("state of ", "")
+         .replace("plurinational state of ", "")
+         .replace("kingdom of ", "")
+         .replace("the ", "")
+         .strip()
+    )
+
+    # 3) Coincidencia exacta en lista válida (title-case)
+    tc = re.sub(r"\s+", " ", s2).title()
+    if tc in VALID_COUNTRIES:
+        return tc
+
+    # 4) Split por coma/paréntesis/and (e.g., 'Congo (Kinshasa)')
+    s3 = re.split(r"[,(]|\band\b", s2)[0].strip()
+    tc3 = s3.title()
+    if tc3 in VALID_COUNTRIES:
+        return tc3
+
+    # 5) Reglas específicas tardías
+    if s in {"kosovo","xk","xkx"}:
+        # Estricto ISO: descartar (no ISO 3166-1 oficial)
+        return None
+    if s in {"eng","gb","gbr"}:
+        return "United Kingdom"
+    if s in {"usa","us","usa "}:
+        return "United States"
+
+    # 6) Nada encaja → None (se filtra)
+    return None
+
+def standardize_countries_strict(df: pd.DataFrame, col: str = "Reviewer_Nationality") -> pd.DataFrame:
+    """
+    Normaliza países con reglas estrictas (ISO-like) + filtra no-países.
+    """
+    if col not in df.columns:
+        print(f"[WARN] Columna '{col}' no existe; skip.")
+        return df
+    print("Normalizando países (estricto ISO + territorios → país)…")
+    before = df[col].nunique(dropna=True)
+    df = df.copy()
+    df[col] = df[col].apply(canonical_country)
+    df = df[~df[col].isna()].reset_index(drop=True)  # filtra None
+    after = df[col].nunique(dropna=True)
+    print(f"   Únicos antes: {before} → después: {after} (consolidados: {before - after})")
+    return df
+
+# ============================================================
+# 1) Limpieza de texto (tus funciones originales (Matías Mosquera))
+# ============================================================
 
 def clean_text(text: str) -> str:
     """
@@ -231,60 +378,102 @@ def get_country_mapping() -> dict:
     return country_mapping
 
 
-def standardize_countries(df: pd.DataFrame, 
-                         country_column: str = 'Reviewer_Nationality') -> pd.DataFrame:
+def standardize_countries(df: pd.DataFrame, country_column: str = 'Reviewer_Nationality',
+                          strict: bool = True) -> pd.DataFrame:
     """
-    Estandariza los nombres de países en la columna especificada.
-    
-    Args:
-        df: DataFrame con columna de países
-        country_column: Nombre de la columna con países
-        
-    Returns:
-        DataFrame con países estandarizados
+    API de compatibilidad:
+      - strict=True  -> usa el normalizador ISO-like (recomendado)
+      - strict=False -> usa el mapeo básico legacy (tu función original)
     """
-    if country_column not in df.columns:
-        print(f"Advertencia: Columna '{country_column}' no encontrada")
-        return df
+    if not strict:
+        # ---- Legacy: implementación original (Matías Mosquera), con mejoras mínimas(FQ)----
+        if country_column not in df.columns:
+            print(f"Advertencia: Columna '{country_column}' no encontrada")
+            return df
+        df_clean = df.copy()
+        print(f"Estandarizando nombres de países en '{country_column}' (LEGACY)...")
+        unique_before = df_clean[country_column].nunique()
+        df_clean[country_column] = df_clean[country_column].astype(str).str.strip()
+
+        country_map = get_country_mapping()
+
+        def map_country(country):
+            if pd.isna(country) or country == '':
+                return country
+            if country in country_map:
+                return country_map[country]
+            country_lower = country.lower()
+            for key, value in country_map.items():
+                if key.lower() == country_lower:
+                    return value
+            return country.strip()
+
+        df_clean[country_column] = df_clean[country_column].apply(map_country)
+        unique_after = df_clean[country_column].nunique()
+        print(f"   Países únicos antes: {unique_before}")
+        print(f"   Países únicos después: {unique_after}")
+        print(f"   Países consolidados: {unique_before - unique_after}")
+        return df_clean
     
-    df_clean = df.copy()
-    
-    print(f"Estandarizando nombres de países en '{country_column}'...")
-    
-    # Contar países únicos antes
-    unique_before = df_clean[country_column].nunique()
-    
-    # PRIMERO: Limpiar espacios en blanco y normalizar
-    df_clean[country_column] = df_clean[country_column].str.strip()
-    
-    # Obtener mapeo DESPUÉS de limpiar
-    country_map = get_country_mapping()
-    
-    # Aplicar mapeo (case-insensitive)
-    def map_country(country):
-        if pd.isna(country) or country == '':
-            return country
-        
-        # Buscar coincidencia exacta primero
-        if country in country_map:
-            return country_map[country]
-        
-        # Buscar coincidencia case-insensitive
-        country_lower = country.lower()
-        for key, value in country_map.items():
-            if key.lower() == country_lower:
-                return value
-        
-        # Si no hay mapeo, mantener el valor original capitalizado
-        return country.strip()
-    
-    df_clean[country_column] = df_clean[country_column].apply(map_country)
-    
-    # Contar países únicos después
-    unique_after = df_clean[country_column].nunique()
-    
-    print(f"   Países únicos antes: {unique_before}")
-    print(f"   Países únicos después: {unique_after}")
-    print(f"   Países consolidados: {unique_before - unique_after}")
-    
-    return df_clean
+
+    # ---- Estricto (recomendado) ----
+    return standardize_countries_strict(df, col=country_column)
+
+def country_consolidation_report(df: pd.DataFrame, col: str = "Reviewer_Nationality") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Devuelve:
+      - consolidated: por país canónico -> total filas, #alias, lista de alias
+      - dropped: valores originales que fueron descartados (None) con sus conteos
+    """
+    if col not in df.columns:
+        raise KeyError(f"Columna '{col}' no existe en el DataFrame.")
+
+    tmp = df[[col]].copy()
+    tmp["__original__"] = tmp[col].astype(str)
+    tmp["__canonical__"] = tmp["__original__"].apply(canonical_country)
+
+    # Alias que sí consolidaron en un país válido
+    kept = tmp[~tmp["__canonical__"].isna()].copy()
+    alias_counts = kept.groupby(["__canonical__", "__original__"]).size().reset_index(name="rows")
+
+    # Resumen por país canónico
+    consolidated = (
+        alias_counts.groupby("__canonical__")
+        .agg(
+            total_rows=("rows", "sum"),
+            alias_count=("__original__", "nunique"),
+            aliases=("__original__", lambda s: sorted(s.unique()))
+        )
+        .reset_index()
+        .rename(columns={"__canonical__": "country"})
+        .sort_values(["alias_count", "total_rows"], ascending=[False, False])
+    )
+
+    # Valores descartados (no-país/ruido)
+    dropped = (
+        tmp[tmp["__canonical__"].isna()]
+        .groupby("__original__")
+        .size()
+        .reset_index(name="rows")
+        .sort_values("rows", ascending=False)
+        .rename(columns={"__original__": "dropped_value"})
+    )
+
+    return consolidated, dropped
+
+# ============================================================
+# 4) Pipeline helper (opcional)
+# ============================================================
+
+def apply_full_cleaning(df: pd.DataFrame,
+                        country_col: str = "Reviewer_Nationality",
+                        strict_countries: bool = True) -> pd.DataFrame:
+    """
+    Pipeline recomendado: tipos → nulos → duplicados → reseñas → países (estricto).
+    """
+    df = validate_data_types(df)
+    df = handle_missing_values(df)
+    df = remove_duplicates(df)
+    df = clean_and_compose_reviews(df)
+    df = standardize_countries(df, country_column=country_col, strict=strict_countries)
+    return df
