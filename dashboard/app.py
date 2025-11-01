@@ -20,14 +20,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------- Conectar Streamlit con scripts/analyze.py ----------
+# ---------- Conectar Streamlit con scripts/main.py ----------
 import subprocess, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]          # raíz del repo
 RAW_PATH = ROOT / "data" / "Hotel_Reviews.csv"
 PROCESSED_PATH = ROOT / "data" / "hotel_reviews_processed.csv"
-ANALYZE_PY = ROOT / "scripts" / "analyze.py"
+MAIN_PY = ROOT / "main.py"
 
 def processed_is_stale(max_age_hours: int = 24) -> bool:
     """Devuelve True si el procesado no existe o es muy viejo."""
@@ -38,15 +38,15 @@ def processed_is_stale(max_age_hours: int = 24) -> bool:
 
 def run_analyze_cli(sample: int = 0, stream: bool = True, chunk: int = 100_000, topics: bool = False) -> tuple[bool, str]:
     """
-    Ejecuta scripts/analyze.py desde Streamlit.
+    Ejecuta main.py desde Streamlit.
     Devuelve (ok, log).
     """
     if not RAW_PATH.exists():
         return False, f" No se encontró el RAW en: {RAW_PATH}"
-    if not ANALYZE_PY.exists():
-        return False, f" No se encontró analyze.py en: {ANALYZE_PY}"
+    if not MAIN_PY.exists():
+        return False, f" No se encontró main.py en: {MAIN_PY}"
 
-    cmd = [sys.executable, str(ANALYZE_PY)]
+    cmd = [sys.executable, str(MAIN_PY)]
     if stream: 
         cmd += ["--stream"]
     if sample > 0: 
@@ -62,7 +62,7 @@ def run_analyze_cli(sample: int = 0, stream: bool = True, chunk: int = 100_000, 
         log = res.stdout + "\n" + res.stderr
         return ok, log
     except Exception as e:
-        return False, f" Error al ejecutar analyze.py: {e}"
+        return False, f" Error al ejecutar main.py: {e}"
 
 # ======================
 # 2. CSS Profesional Ejecutivo
@@ -610,7 +610,7 @@ with st.sidebar:
     
     # Expander para procesamiento VADER
     with st.expander("Procesamiento VADER", expanded=False):
-        st.write("Genera/actualiza `data/hotel_reviews_processed.csv` usando `scripts/analyze.py`.")
+        st.write("Genera/actualiza `data/hotel_reviews_processed.csv` usando `main.py`.")
 
         colA, colB = st.columns(2)
         sample_n = colA.number_input("Muestra (0 = todo)", min_value=0, value=0, step=50000)

@@ -148,3 +148,143 @@ def validate_data_types(df: pd.DataFrame) -> pd.DataFrame:
     return df_clean
 
 
+def get_country_mapping() -> dict:
+    """
+    Retorna un diccionario de mapeo para estandarizar nombres de países.
+    
+    Returns:
+        Diccionario con variantes como claves y nombre estándar como valor
+    """
+    country_mapping = {
+        # Reino Unido y variantes
+        'United Kingdom': 'United Kingdom',
+        'UK': 'United Kingdom',
+        'Great Britain': 'United Kingdom',
+        'England': 'United Kingdom',
+        'Scotland': 'United Kingdom',
+        'Wales': 'United Kingdom',
+        'Northern Ireland': 'United Kingdom',
+        'britain': 'United Kingdom',
+        'uk': 'United Kingdom',
+        'British Virgin Islands': 'United Kingdom',  # Territorio UK
+        
+        # Estados Unidos y variantes
+        'United States of America': 'United States',
+        'USA': 'United States',
+        'US': 'United States',
+        'United States': 'United States',
+        'U.S.A.': 'United States',
+        'U.S.': 'United States',
+        'usa': 'United States',
+        'us': 'United States',
+        'American Samoa': 'United States',  # Territorio US
+        'United States Minor Outlying Islands': 'United States',  # Territorio US
+        
+        # Países Bajos y variantes
+        'Netherlands': 'Netherlands',
+        'The Netherlands': 'Netherlands',
+        'Holland': 'Netherlands',
+        'nederland': 'Netherlands',
+        
+        # Corea
+        'South Korea': 'South Korea',
+        'Korea': 'South Korea',
+        'Republic of Korea': 'South Korea',
+        
+        # Irlanda
+        'Ireland': 'Ireland',
+        'Republic of Ireland': 'Ireland',
+        'Eire': 'Ireland',
+        
+        # Rusia
+        'Russia': 'Russia',
+        'Russian Federation': 'Russia',
+        
+        # Emiratos Árabes
+        'United Arab Emirates': 'United Arab Emirates',
+        'UAE': 'United Arab Emirates',
+        'U.A.E.': 'United Arab Emirates',
+        
+        # China
+        'China': 'China',
+        'People\'s Republic of China': 'China',
+        'PRC': 'China',
+        
+        # Hong Kong
+        'Hong Kong': 'Hong Kong',
+        'Hong Kong SAR': 'Hong Kong',
+        
+        # Taiwán
+        'Taiwan': 'Taiwan',
+        'Chinese Taipei': 'Taiwan',
+        
+        # República Checa
+        'Czech Republic': 'Czech Republic',
+        'Czechia': 'Czech Republic',
+        
+        # Otros casos comunes
+        'New Zealand': 'New Zealand',
+        'Saudi Arabia': 'Saudi Arabia',
+        'South Africa': 'South Africa',
+    }
+    
+    return country_mapping
+
+
+def standardize_countries(df: pd.DataFrame, 
+                         country_column: str = 'Reviewer_Nationality') -> pd.DataFrame:
+    """
+    Estandariza los nombres de países en la columna especificada.
+    
+    Args:
+        df: DataFrame con columna de países
+        country_column: Nombre de la columna con países
+        
+    Returns:
+        DataFrame con países estandarizados
+    """
+    if country_column not in df.columns:
+        print(f"Advertencia: Columna '{country_column}' no encontrada")
+        return df
+    
+    df_clean = df.copy()
+    
+    print(f"Estandarizando nombres de países en '{country_column}'...")
+    
+    # Contar países únicos antes
+    unique_before = df_clean[country_column].nunique()
+    
+    # PRIMERO: Limpiar espacios en blanco y normalizar
+    df_clean[country_column] = df_clean[country_column].str.strip()
+    
+    # Obtener mapeo DESPUÉS de limpiar
+    country_map = get_country_mapping()
+    
+    # Aplicar mapeo (case-insensitive)
+    def map_country(country):
+        if pd.isna(country) or country == '':
+            return country
+        
+        # Buscar coincidencia exacta primero
+        if country in country_map:
+            return country_map[country]
+        
+        # Buscar coincidencia case-insensitive
+        country_lower = country.lower()
+        for key, value in country_map.items():
+            if key.lower() == country_lower:
+                return value
+        
+        # Si no hay mapeo, mantener el valor original capitalizado
+        return country.strip()
+    
+    df_clean[country_column] = df_clean[country_column].apply(map_country)
+    
+    # Contar países únicos después
+    unique_after = df_clean[country_column].nunique()
+    
+    print(f"   Países únicos antes: {unique_before}")
+    print(f"   Países únicos después: {unique_after}")
+    print(f"   Países consolidados: {unique_before - unique_after}")
+    
+    return df_clean
