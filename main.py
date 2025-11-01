@@ -13,7 +13,8 @@ from scripts.data_cleaning import (
     clean_and_compose_reviews,
     remove_duplicates,
     handle_missing_values,
-    validate_data_types
+    validate_data_types,
+    standardize_countries
 )
 from scripts.text_processing import clean_dataframe_reviews
 from scripts.sentiment_analysis import sentiment_chunked
@@ -111,6 +112,9 @@ def main():
     
     # Eliminar duplicados
     df = remove_duplicates(df)
+    
+    # Estandarizar nombres de países
+    df = standardize_countries(df, country_column='Reviewer_Nationality')
     
     # Limpiar y combinar reseñas
     df = clean_and_compose_reviews(df)
