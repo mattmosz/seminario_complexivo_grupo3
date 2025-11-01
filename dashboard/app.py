@@ -36,25 +36,27 @@ def processed_is_stale(max_age_hours: int = 24) -> bool:
     age_hours = (time.time() - PROCESSED_PATH.stat().st_mtime) / 3600.0
     return age_hours > max_age_hours
 
-def run_analyze_cli(sample: int = 0, stream: bool = True, chunk: int = 100_000, topics: bool = False) -> tuple[bool, str]:
-    """
-    Ejecuta main.py desde Streamlit.
-    Devuelve (ok, log).
-    """
+def run_analyze_cli(sample: int = 0,
+                    stream: bool = True,
+                    chunk: int = 100_000,
+                    topics: bool = False,
+                    skip_sentiment: bool = False) -> tuple[bool, str]:
     if not RAW_PATH.exists():
         return False, f" No se encontró el RAW en: {RAW_PATH}"
     if not MAIN_PY.exists():
         return False, f" No se encontró main.py en: {MAIN_PY}"
 
     cmd = [sys.executable, str(MAIN_PY)]
-    if stream: 
+    if stream:
         cmd += ["--stream"]
-    if sample > 0: 
+    if sample > 0:
         cmd += ["--sample", str(sample)]
-    if chunk: 
-        cmd += ["--chunk", str(chunk)]
-    if topics: 
+    if chunk:
+        cmd += ["--chunk-size", str(chunk)]
+    if topics:
         cmd += ["--topics"]
+    if skip_sentiment:
+        cmd += ["--skip-sentiment"]  # <- ejecuta solo limpieza (incluye países)
 
     try:
         res = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
