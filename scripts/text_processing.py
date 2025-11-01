@@ -19,7 +19,7 @@ def clean_text(text: str) -> str:
 
 def compose_review(row) -> str:
     
-    # Combina las reseñas positivas y negativas en un solo texto.
+    # Combina las reseñas positivas y negativas en un solo texto
     
     positive = clean_text(row.get("Positive_Review", ""))
     negative = clean_text(row.get("Negative_Review", ""))
