@@ -1,7 +1,3 @@
-# scripts/topic_modeling.py
-"""
-Módulo para modelado de tópicos usando LDA (Latent Dirichlet Allocation).
-"""
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
