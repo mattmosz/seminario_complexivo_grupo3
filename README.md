@@ -33,7 +33,18 @@ cd seminario_complexivo_grupo3
 pip install -r requirements.txt
 ```
 
-### Uso Básico
+### Opción 1: Inicio Automático (Recomendado) 🆕
+
+```powershell
+# Inicia API + Dashboard automáticamente
+.\start_services.ps1
+```
+
+Esto iniciará:
+- 🌐 API REST en http://localhost:8000
+- 📊 Dashboard en http://localhost:8501
+
+### Opción 2: Uso Manual
 
 ```bash
 # Análisis completo del dataset
@@ -47,6 +58,12 @@ python main.py --topics --n-topics 8
 
 # Modo bajo consumo de RAM
 python main.py --stream
+
+# Iniciar solo la API
+uvicorn  api_app:app --reload
+
+# Iniciar solo el Dashboard
+streamlit run dashboard/app.py
 ```
 
 ---
@@ -68,6 +85,9 @@ seminario_complexivo_grupo3/
 │   ├── topic_modeling.py     # Modelado LDA
 │   └── example_usage.py      # Ejemplos
 ├── dashboard/                 # 📊 Dashboard web
+├── api_app.py                 # 🌐 API REST con FastAPI
+├── test_api.py                # 🧪 Tests de API
+├── dashboard_api_integration_example.py  # 🔗 Demo integración
 └── docs/                      # 📖 Documentación
 ```
 
@@ -227,7 +247,66 @@ pip install -r requirements.txt
 - **NLTK** - Procesamiento de lenguaje natural
 - **VADER** - Análisis de sentimientos
 - **Scikit-learn** - Machine Learning (LDA)
-- **Streamlit** - Dashboard interactivo (en desarrollo)
+- **Streamlit** - Dashboard interactivo
+- **FastAPI** - API REST para análisis de reseñas
+
+---
+
+## 🌐 API REST
+
+El proyecto incluye una **API REST completa** construida con FastAPI para análisis de reseñas:
+
+### Endpoints Disponibles
+
+#### 1. `POST /reviews/analyze` - Analizar reseña individual
+Analiza el sentimiento y extrae tópicos de una reseña.
+
+```bash
+curl -X POST "http://localhost:8000/reviews/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Amazing hotel with great service!"}'
+```
+
+**Respuesta:**
+```json
+{
+  "sentiment": {
+    "sentiment": "positivo",
+    "compound_score": 0.8478,
+    "positive_score": 0.612
+  },
+  "topics": [
+    {"topic_id": 1, "keywords": "service, staff, excellent"}
+  ]
+}
+```
+
+#### 2. `GET /reviews/topics` - Resumen de tópicos agregados
+Obtiene tópicos más mencionados en reseñas positivas vs negativas.
+
+```bash
+curl "http://localhost:8000/reviews/topics?n_topics=5&max_reviews=5000"
+```
+
+### Iniciar la API
+
+```bash
+# Iniciar servidor
+python api_app.py
+# Servidor en http://localhost:8000
+
+# Documentación interactiva
+# http://localhost:8000/docs
+
+# Ejecutar tests
+python test_api.py
+```
+
+### Documentación Completa
+- **[API_README.md](API_README.md)** - Documentación exhaustiva con ejemplos
+- **[QUICKSTART_API.md](QUICKSTART_API.md)** - Guía de inicio rápido
+- **[API_SUMMARY.md](API_SUMMARY.md)** - Resumen técnico completo
+- **Swagger UI**: http://localhost:8000/docs
 
 ---
 
@@ -273,15 +352,16 @@ Este proyecto es parte de un trabajo académico para el Seminario Complexivo.
 ## ✨ Características Destacadas
 
 - ✅ Pipeline modular y reutilizable
+- ✅ API REST con FastAPI (análisis de reseñas en tiempo real)
 - ✅ Procesamiento eficiente de grandes datasets
 - ✅ Modo streaming para bajo consumo de RAM
 - ✅ Análisis de sentimientos con VADER
 - ✅ Modelado de tópicos con LDA
-- ✅ Documentación completa
+- ✅ Documentación completa y tests automatizados
 - ✅ Ejemplos de uso incluidos
-- ✅ Dashboard interactivo
+- ✅ Dashboard interactivo con Streamlit
 
 ---
 
-**Versión:** 2.0  
-**Última actualización:** Octubre 2025  
+**Versión:** 2.1  
+**Última actualización:** Noviembre 2025  
