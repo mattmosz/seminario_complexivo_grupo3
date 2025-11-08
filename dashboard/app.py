@@ -36,9 +36,10 @@ else:
 def check_api_available_fast() -> bool:
     """Verifica si la API está disponible con timeout ultra-rápido (sin cache)"""
     try:
-        res = requests.get(f"{API_URL}/health", timeout=1)  # 1 segundo máximo
+        res = requests.get(f"{API_URL}/health", timeout=0.5)  # 0.5 segundos máximo - ultra rápido
         return res.status_code == 200
-    except:
+    except Exception as e:
+        # Fallar silenciosamente y rápido
         return False
 
 @st.cache_data(ttl=60)
@@ -718,26 +719,19 @@ if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
     st.session_state.df = None
     st.session_state.api_checked = False
+    st.session_state.api_online = False  # Asumir offline por defecto
 
-# Si nunca hemos verificado la API, hacerlo AHORA de forma rápida (1s timeout)
-if not st.session_state.api_checked:
-    st.session_state.api_online = check_api_available_fast()
+# NO verificar API en el primer render (para que Streamlit Cloud cargue rápido)
+# Solo verificar cuando el usuario interactúe
+if st.session_state.api_checked:
+    # Ya verificamos antes, usar el resultado cacheado
+    pass
+else:
+    # Primera carga - NO verificar API para acelerar deploy
+    # El usuario puede hacer clic en "Reintentar" después
     st.session_state.api_checked = True
-
-# Si API está online y no hemos cargado datos, intentar cargar
-# PERO: solo si el usuario no está navegando (evita bloqueo en cada rerun)
-if st.session_state.api_online and not st.session_state.data_loaded:
-    # Solo cargar en la primera visita (no en cada interacción)
-    if 'first_load_attempted' not in st.session_state:
-        st.session_state.first_load_attempted = True
-        
-        with st.spinner("📥 Cargando datos desde API..."):
-            df_temp = load_data()
-            if df_temp is not None:
-                st.session_state.df = df_temp
-                st.session_state.data_loaded = True
-            else:
-                st.session_state.api_online = False  # Marcar como offline si falla
+    st.session_state.api_online = False
+    st.session_state.skip_first_check = True  # Flag para saber que saltamos el check
 
 # Obtener datos del session_state
 df = st.session_state.df
@@ -771,11 +765,27 @@ if not api_available:
     col1, col2 = st.columns([3, 1])
     with col1:
         if st.button("🔄 Reintentar Conexión", type="primary", use_container_width=True):
-            # Limpiar todo el estado
+            # Limpiar cache y estado
             st.cache_data.clear()
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+            
+            # Intentar conectar ahora
+            with st.spinner("🔄 Verificando API..."):
+                api_check = check_api_available_fast()
+            
+            if api_check:
+                # API respondió - intentar cargar datos
+                with st.spinner("📥 Cargando datos..."):
+                    df_temp = load_data()
+                    if df_temp is not None:
+                        st.session_state.df = df_temp
+                        st.session_state.data_loaded = True
+                        st.session_state.api_online = True
+                        st.success("✅ ¡Conectado! Recargando...")
+                        st.rerun()
+                    else:
+                        st.error("❌ API respondió pero no hay datos")
+            else:
+                st.error("❌ API sigue sin responder. Espera 1 minuto más si usas Render.")
     
     with col2:
         if st.button("ℹ️ Info", use_container_width=True):
