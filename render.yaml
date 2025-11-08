@@ -1,0 +1,32 @@
+# Configuración de deployment para Render.com
+services:
+  # Servicio de API Backend
+  - type: web
+    name: hotel-reviews-api
+    env: docker
+    region: oregon
+    plan: free
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    
+    # Variables de entorno
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: ALLOWED_ORIGINS
+        value: https://*.streamlit.app,http://localhost:8501
+    
+    # Health check
+    healthCheckPath: /health
+    
+    # Autoscaling (solo en planes pagos)
+    # autoDeploy: true
+    
+    # Recursos
+    # disk:
+    #   name: data
+    #   mountPath: /app/data
+    #   sizeGB: 1

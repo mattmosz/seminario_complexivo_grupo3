@@ -1,0 +1,24 @@
+# Archivos y directorios que Streamlit Cloud no necesita procesar
+# Reduce tiempo de deployment
+
+# Archivos de desarrollo
+*.pyc
+__pycache__/
+.pytest_cache/
+.vscode/
+.idea/
+
+# Documentación innecesaria para deployment
+*.md
+!README.md
+
+# Archivos de backup
+*_old.py
+*.bak
+*.tmp
+
+# Logs
+*.log
+
+# Archivos de secrets locales (ya están en .gitignore)
+.streamlit/secrets.toml
