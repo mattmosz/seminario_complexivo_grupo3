@@ -33,14 +33,18 @@ else:
 
 # ---------- Funciones para integración con API ----------
 
-@st.cache_data(ttl=60)
-def check_api_available() -> bool:
-    """Verifica si la API está disponible"""
+def check_api_available_fast() -> bool:
+    """Verifica si la API está disponible con timeout ultra-rápido (sin cache)"""
     try:
-        res = requests.get(f"{API_URL}/health", timeout=3)  # Reducido a 3s
+        res = requests.get(f"{API_URL}/health", timeout=1)  # 1 segundo máximo
         return res.status_code == 200
     except:
         return False
+
+@st.cache_data(ttl=60)
+def check_api_available() -> bool:
+    """Verifica si la API está disponible (con cache)"""
+    return check_api_available_fast()
 
 @st.cache_data(ttl=300)
 def get_stats_from_api() -> dict | None:
@@ -88,10 +92,13 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             "limit": limit
         }
         
+        # Timeout: 15s para carga inicial, 30s para filtros
+        timeout_value = 15 if limit is None else 30
+        
         response = requests.post(
             f"{API_URL}/reviews/filter",
             json=filters,
-            timeout=30
+            timeout=timeout_value
         )
         
         if response.status_code == 200:
@@ -100,7 +107,7 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
             return None
     except requests.exceptions.Timeout:
-        st.error("⏱️ La petición excedió el tiempo límite")
+        st.error(f"⏱️ La petición excedió el tiempo límite ({timeout_value}s). La API puede estar sobrecargada.")
         return None
     except requests.exceptions.ConnectionError:
         st.error("🔌 No se pudo conectar a la API")
@@ -703,11 +710,38 @@ def load_data() -> pd.DataFrame | None:
         st.error(f"⚠️ Error cargando datos: {e}")
         return None
 
-# --- Llamar a la función de carga ---
-df = load_data()
+# --- Inicialización INSTANTÁNEA del dashboard ---
+# ESTRATEGIA: Dashboard inicia inmediatamente, sin esperar API
 
-# Verificar si la API está disponible
-api_available = df is not None
+# Inicializar session_state PRIMERO (antes de cualquier consulta)
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+    st.session_state.df = None
+    st.session_state.api_checked = False
+
+# Si nunca hemos verificado la API, hacerlo AHORA de forma rápida (1s timeout)
+if not st.session_state.api_checked:
+    st.session_state.api_online = check_api_available_fast()
+    st.session_state.api_checked = True
+
+# Si API está online y no hemos cargado datos, intentar cargar
+# PERO: solo si el usuario no está navegando (evita bloqueo en cada rerun)
+if st.session_state.api_online and not st.session_state.data_loaded:
+    # Solo cargar en la primera visita (no en cada interacción)
+    if 'first_load_attempted' not in st.session_state:
+        st.session_state.first_load_attempted = True
+        
+        with st.spinner("📥 Cargando datos desde API..."):
+            df_temp = load_data()
+            if df_temp is not None:
+                st.session_state.df = df_temp
+                st.session_state.data_loaded = True
+            else:
+                st.session_state.api_online = False  # Marcar como offline si falla
+
+# Obtener datos del session_state
+df = st.session_state.df
+api_available = df is not None and st.session_state.data_loaded
 
 if not api_available:
     # Modo sin API - Mostrar mensaje y deshabilitar funcionalidades
@@ -726,14 +760,35 @@ if not api_available:
     
     ### 🔄 ¿Qué hacer?
     
-    1. **Si usas Render Free Tier:** Espera 1 minuto y recarga la página
+    1. **Si usas Render Free Tier:** Espera 1 minuto y haz clic en "Reintentar"
     2. **Si desarrollas localmente:** Inicia la API con `python api_app.py`
     3. **Verifica la conexión:** Accede a {}/health
     
     ---
-    
-    **El dashboard se mostrará en modo de solo lectura hasta que la API esté disponible.**
     """.format(API_URL, API_URL))
+    
+    # Botón para reintentar la conexión
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button("🔄 Reintentar Conexión", type="primary", use_container_width=True):
+            # Limpiar todo el estado
+            st.cache_data.clear()
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+    
+    with col2:
+        if st.button("ℹ️ Info", use_container_width=True):
+            st.info("""
+            **Render Free Tier:**
+            - Servicios inactivos se duermen
+            - Primer request tarda 30-60s
+            - Solución: Espera y recarga
+            
+            **Local:**
+            - Verifica que la API esté corriendo
+            - Comando: `python api_app.py`
+            """)
     
     # Inicializar df vacío para evitar errores
     df = pd.DataFrame()
