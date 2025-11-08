@@ -1,0 +1,19 @@
+# Requirements para API Backend (Docker/Render)
+# Dependencias mínimas necesarias para ejecutar api_app.py
+
+# FastAPI y servidor ASGI
+fastapi==0.110.0
+uvicorn[standard]==0.27.1
+pydantic==2.6.1
+
+# Procesamiento de datos
+pandas==2.2.0
+numpy==1.26.3
+
+# NLP y análisis de texto
+nltk==3.8.1
+scikit-learn==1.4.0
+vaderSentiment==3.3.2
+
+# Utilidades
+python-multipart==0.0.9
