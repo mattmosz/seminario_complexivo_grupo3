@@ -1,0 +1,23 @@
+# Configuración de Streamlit para Streamlit Cloud
+# Este archivo está en la raíz para que Streamlit Cloud lo detecte
+
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 500
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[theme]
+base="dark"
+primaryColor="#E91E8C"
+backgroundColor="#0F172A"
+secondaryBackgroundColor="#111827"
+textColor="#F8FAFC"
