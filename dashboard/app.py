@@ -25,11 +25,11 @@ st.set_page_config(
 # Usar secrets de Streamlit Cloud si están disponibles, sino local
 if "API_URL" in st.secrets:
     API_URL = st.secrets["API_URL"]
-    API_TIMEOUT = st.secrets.get("API_TIMEOUT", 30)
+    API_TIMEOUT = st.secrets.get("API_TIMEOUT", 10)  # Reducido a 10s
 else:
     # Desarrollo local
     API_URL = os.getenv("API_URL", "http://localhost:8000")
-    API_TIMEOUT = int(os.getenv("API_TIMEOUT", "30"))
+    API_TIMEOUT = int(os.getenv("API_TIMEOUT", "10"))  # Reducido a 10s
 
 # ---------- Funciones para integración con API ----------
 
@@ -37,7 +37,7 @@ else:
 def check_api_available() -> bool:
     """Verifica si la API está disponible"""
     try:
-        res = requests.get(f"{API_URL}/health", timeout=5)
+        res = requests.get(f"{API_URL}/health", timeout=3)  # Reducido a 3s
         return res.status_code == 200
     except:
         return False
@@ -663,35 +663,27 @@ BASE_API_URL = None  # Ejemplo: "http://localhost:8000/v1"
 TOKEN = None          # Ejemplo: "tu_token_si_usas_auth"
 
 @st.cache_data(show_spinner="🔄 Cargando datos desde API...")
-def load_data() -> pd.DataFrame:
-    """Carga datos desde API usando filtros básicos."""
+def load_data() -> pd.DataFrame | None:
+    """Intenta cargar datos desde API. Retorna None si API no disponible."""
     
-    # Verificar que API esté disponible
+    # Verificar que API esté disponible (sin bloquear)
     if not check_api_available():
-        st.error("⚠️ La API no está disponible. Por favor, inicia el servidor API.")
-        st.info(f"API URL configurada: {API_URL}")
-        st.code("python api_app.py", language="bash")
-        st.stop()
+        return None
     
     try:
-        # Obtener TODOS los datos sin filtros (limit alto)
-        st.info(f"🔌 Conectado a API: {API_URL}")
-        
-        result = get_filtered_reviews_from_api(limit=None)  # Sin límite para obtener todo
-        
-        if result is None:
-            st.error("Error obteniendo datos de la API")
-            st.stop()
-        
-        reviews = result.get("reviews", [])
-        
-        if not reviews:
-            st.error("No se recibieron datos de la API")
-            st.stop()
-        
-        df = pd.DataFrame(reviews)
-        
-        st.success(f"✅ {len(df):,} reseñas cargadas desde la API")
+        # Cargar TODOS los datos sin límite
+        with st.spinner("� Cargando datos desde API..."):
+            result = get_filtered_reviews_from_api(limit=None)  # SIN LÍMITE - datos completos
+            
+            if result is None:
+                return None
+            
+            reviews = result.get("reviews", [])
+            
+            if not reviews:
+                return None
+            
+            df = pd.DataFrame(reviews)
         
         # Asegurar que las columnas estén en español (ya deberían venir así de la API)
         if "Hotel_Name" in df.columns:
@@ -708,16 +700,47 @@ def load_data() -> pd.DataFrame:
         return df
         
     except Exception as e:
-        st.error(f"❌ Error cargando datos: {e}")
-        st.stop()
+        st.error(f"⚠️ Error cargando datos: {e}")
+        return None
 
 # --- Llamar a la función de carga ---
-try:
-    df = load_data()
+df = load_data()
+
+# Verificar si la API está disponible
+api_available = df is not None
+
+if not api_available:
+    # Modo sin API - Mostrar mensaje y deshabilitar funcionalidades
+    st.warning("""
+    ### ⚠️ API No Disponible
+    
+    El dashboard no pudo conectarse a la API de backend. Esto puede deberse a:
+    
+    - 🔌 La API no está corriendo
+    - 😴 El servicio está en modo "sleep" (Render Free Tier - tarda 30-60s en despertar)
+    - 🌐 Problemas de red o configuración
+    
+    **API URL configurada:** `{}`
+    
+    ---
+    
+    ### 🔄 ¿Qué hacer?
+    
+    1. **Si usas Render Free Tier:** Espera 1 minuto y recarga la página
+    2. **Si desarrollas localmente:** Inicia la API con `python api_app.py`
+    3. **Verifica la conexión:** Accede a {}/health
+    
+    ---
+    
+    **El dashboard se mostrará en modo de solo lectura hasta que la API esté disponible.**
+    """.format(API_URL, API_URL))
+    
+    # Inicializar df vacío para evitar errores
+    df = pd.DataFrame()
+    total_dataset_reviews = 0
+else:
     total_dataset_reviews = len(df)
-except Exception as e:
-    st.error(f" Error al cargar datos: {e}")
-    st.stop()
+    st.success(f"✅ **{total_dataset_reviews:,} reseñas** cargadas desde la API")
 
 
 # ======================
@@ -739,32 +762,40 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Obtener listas desde la API
-    hotels_list = get_hotels_from_api()
-    nationalities_list = get_nationalities_from_api(limit=50)
+    # Obtener listas desde la API (solo si está disponible)
+    if api_available:
+        hotels_list = get_hotels_from_api()
+        nationalities_list = get_nationalities_from_api(limit=50)
+    else:
+        hotels_list = []
+        nationalities_list = []
     
     col_hotel = st.selectbox(
         "Hotel",
-        ["(Todos)"] + hotels_list
+        ["(Todos)"] + hotels_list,
+        disabled=not api_available
     )
     
     if use_vader:
         col_sent = st.radio(
             "Sentimiento",
             ["(Todos)", "positivo", "neutro", "negativo"],
-            horizontal=False
+            horizontal=False,
+            disabled=not api_available
         )
     else:
         col_sent = "(Todos)"
     
     col_nat = st.selectbox(
         "Nacionalidad",
-        ["(Todas)"] + nationalities_list
+        ["(Todas)"] + nationalities_list,
+        disabled=not api_available
     )
     
     score_lo, score_hi = st.slider(
         "Rango de Puntuación",
-        0.0, 10.0, (0.0, 10.0), step=0.5
+        0.0, 10.0, (0.0, 10.0), step=0.5,
+        disabled=not api_available
     )
     
     st.markdown("---")
@@ -772,32 +803,42 @@ with st.sidebar:
     st.markdown("---")
     
     fast_wc = st.toggle("Acelerar nubes de palabras", value=True,
-                        help="Usa muestra de 3000 reseñas para generar nubes más rápido")
+                        help="Usa muestra de 3000 reseñas para generar nubes más rápido",
+                        disabled=not api_available)
     
     # Información de la API
     st.markdown("---")
     st.markdown("### 🔌 Estado de la API")
     
-    if check_api_available():
+    if api_available:
         st.success("✅ API Online")
         st.caption(f"URL: {API_URL}")
     else:
         st.error("❌ API Offline")
         st.caption(f"URL: {API_URL}")
-        st.code("python api_app.py", language="bash")
+        
+        if "localhost" in API_URL:
+            st.code("python api_app.py", language="bash")
+        else:
+            st.info("Si usas Render Free Tier, espera 1 min y recarga la página.")
 
 # ======================
 # 6. Aplicar Filtros (vía API)
 # ======================
 
+if not api_available:
+    st.error("⚠️ No se pueden aplicar filtros sin conexión a la API")
+    st.stop()
+
 # Crear objeto de filtros para enviar a la API
+# IMPORTANTE: limit=None asegura que los filtros obtengan TODOS los datos de la API.
 current_filters = {
     "hotel": col_hotel if col_hotel != "(Todos)" else None,
     "sentiment": col_sent if use_vader and col_sent != "(Todos)" else None,
     "nationality": col_nat if col_nat != "(Todas)" else None,
     "score_min": score_lo,
     "score_max": score_hi,
-    "limit": None  # Sin límite para obtener todos los resultados filtrados
+    "limit": None  # ⚠️ None = SIN LÍMITE: Los filtros SIEMPRE obtienen todos los resultados
 }
 
 # Obtener datos filtrados desde la API
