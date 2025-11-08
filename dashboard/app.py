@@ -68,7 +68,7 @@ def run_analyze_cli(sample: int = 0,
         return False, f" Error al ejecutar main.py: {e}"
 
 # ---------- Funciones para integración con API ----------
-API_URL = "http://localhost:8000"
+API_URL = "https://cranky-uncreatively-lannie.ngrok-free.dev"
 
 @st.cache_data(ttl=60)
 def check_api_available() -> bool:
@@ -117,13 +117,13 @@ def get_topics_from_api(n_topics: int = 8, max_reviews: int = 10000) -> dict | N
             st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
             return None
     except requests.exceptions.Timeout:
-        st.error("⏱️ La petición excedió el tiempo límite (120s)")
+        st.error(" La petición excedió el tiempo límite (120s)")
         return None
     except requests.exceptions.ConnectionError:
-        st.error("🔌 No se pudo conectar a la API. ¿Está el servidor corriendo?")
+        st.error(" No se pudo conectar a la API. ¿Está el servidor corriendo?")
         return None
     except Exception as e:
-        st.error(f"❌ Error inesperado: {e}")
+        st.error(f" Error inesperado: {e}")
         return None
 
 # ======================
@@ -210,6 +210,7 @@ st.markdown("""
         background: white;
         padding: 1.5rem 2rem;
         border-radius: 12px;
+        margin-top: 2rem;
         margin-bottom: 1.5rem;
         box-shadow: 0 4px 20px rgba(0,0,0,0.15);
         text-align: center;
@@ -593,6 +594,142 @@ st.markdown("""
     margin-left: 18rem !important; /* ajusta al ancho real del sidebar */
   }
 }
+/* ====== API SECTION — responsive & clean ====== */
+.api-section { display: grid; gap: 1rem; }
+
+/* Fila de estado (online/offline + botón refrescar) */
+.api-status-row {
+  display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+}
+
+/* Dos columnas principales (p. ej. comparaciones / métricas) */
+.api-two-col {
+  display: grid; grid-template-columns: 1.2fr 1fr; gap: 1rem;
+}
+
+/* Grid para tarjetas de tópicos y resultados */
+.api-cards {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;
+}
+
+/* Contenedor de acciones (botones) */
+.api-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.api-actions .stButton > button { width: 100%; }
+
+/* Textarea del texto procesado */
+.api-textarea textarea { min-height: 180px; }
+
+/* Ajustes de las badges y cards en esta sección */
+.api-section .api-card { margin: 0; }
+.api-section .sentiment-badge { width: fit-content; }
+
+/* Breakpoints */
+@media (max-width: 1200px) {
+  .api-two-col { grid-template-columns: 1fr; }
+  .api-cards   { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .api-status-row { flex-direction: column; align-items: stretch; }
+  .api-actions .stButton > button { width: 100% !important; }
+}
+/* ===== API Section Cleanup ===== */
+.api-section {
+  background: white;
+  border-radius: 14px;
+  padding: 1.25rem;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+  border-left: 5px solid #E91E8C;
+  margin-top: 1rem;
+}
+
+.api-section .api-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.api-section .api-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #1E3A5F;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.api-section .api-subtitle {
+  font-size: .95rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.api-status-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: .75rem;
+  align-items: center;
+  margin: .5rem 0 1rem 0;
+}
+
+.api-status-online,
+.api-status-offline {
+  padding: .5rem .875rem;
+  border-radius: 10px;
+  font-weight: 750;
+  font-size: .9rem;
+  text-align: center;
+}
+
+.api-status-online {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+}
+
+.api-status-offline {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #fff;
+}
+
+.api-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.api-card-clean {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  border: 1px solid rgba(30,58,95,.08);
+}
+
+/* métricas compactas arriba del gráfico */
+.api-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px,1fr));
+  gap: .75rem;
+  margin: .75rem 0 1rem 0;
+}
+.api-metrics .stMetric {
+  background: linear-gradient(135deg, #667eea0d, #764ba20d);
+  border-radius: 10px;
+  padding: .5rem .75rem;
+}
+
+/* responsive */
+@media (max-width: 1100px) {
+  .api-grid-2 { grid-template-columns: 1fr; }
+  .api-metrics { grid-template-columns: repeat(2, 1fr); }
+  .api-section .api-title { font-size: 1.1rem; }
+}
+@media (max-width: 700px) {
+  .api-metrics { grid-template-columns: 1fr; }
+  .api-status-row { grid-template-columns: 1fr; }
+}
+
 
 </style>
 """, unsafe_allow_html=True)
@@ -640,7 +777,7 @@ def load_data() -> pd.DataFrame:
     else:
         try:
             df = pd.read_csv(DATA_PATH, encoding="utf-8")
-            st.info(" Datos cargados desde el CSV local")
+           ## st.info(" Datos cargados desde el CSV local")
         except UnicodeDecodeError:
             df = pd.read_csv(DATA_PATH, encoding="latin-1")
         except FileNotFoundError:
@@ -982,7 +1119,7 @@ def fig_map(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
         m = m.sample(500, random_state=42)
     
     if vader_enabled:
-        fig = px.scatter_mapbox(
+        fig = px.scatter_map(
             m, lat="lat", lon="lng",
             color="Etiqueta de Sentimiento",
             color_discrete_map=PALETTE,
@@ -992,7 +1129,7 @@ def fig_map(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
             height=450
         )
     else:
-        fig = px.scatter_mapbox(
+        fig = px.scatter_map(
             m, lat="lat", lon="lng",
             hover_name="Nombre del Hotel",
             hover_data={"Puntuación del Revisor": True, "lat": False, "lng": False},
@@ -1449,163 +1586,140 @@ with tab_stats:
 # TAB 6: Análisis con API
 tab_api = tab6 if use_vader else tab5
 with tab_api:
-    st.markdown("### 🔌 Análisis de Reseñas con API REST")
-    st.markdown("Esta sección utiliza la API REST de FastAPI para análisis en tiempo real")
-    
+    st.markdown("### Analisis de Reseñas con API REST")
+    st.markdown("Esta sección usa la API de FastAPI para análisis en tiempo real.")
+
     # Verificar estado de la API
     api_available = check_api_available()
-    
+
+    # Fila de estado y botón
     col_status1, col_status2 = st.columns([3, 1])
     with col_status1:
         if api_available:
-            st.markdown('<div class="api-status-online">✅ API CONECTADA</div>', unsafe_allow_html=True)
+            st.markdown('<div class="api-status-online">API CONECTADA</div>', unsafe_allow_html=True)
             st.caption(f"Endpoint: {API_URL}")
         else:
-            st.markdown('<div class="api-status-offline">❌ API NO DISPONIBLE</div>', unsafe_allow_html=True)
-            st.caption(f"Intenta iniciar la API: `python api_app.py`")
-    
+            st.markdown('<div class="api-status-offline">API NO DISPONIBLE</div>', unsafe_allow_html=True)
+            st.caption("Inicia la API con: python api_app.py")
+
     with col_status2:
-        if st.button("🔄 Verificar API", use_container_width=True):
+        if st.button("Verificar API", key="ping_api_btn", width="stretch"):
             st.cache_data.clear()
             st.rerun()
-    
+
     if not api_available:
-        st.error("""
-        **La API no está disponible.** Para usar esta funcionalidad:
-        
-        1. Abre una terminal en la raíz del proyecto
-        2. Ejecuta: `python api_app.py`
-        3. Espera a que inicie en http://localhost:8000
-        4. Recarga esta página
-        
-        La API permite análisis de reseñas individuales y resúmenes de tópicos agregados.
-        """)
-        
-        st.info("""
-        **📖 Documentación de la API:**
-        - Swagger UI: http://localhost:8000/docs
-        - README: API_README.md
-        - Guía rápida: QUICKSTART_API.md
-        """)
-        
+        st.error(
+            "La API no está disponible. Pasos:\n\n"
+            "1) Abre una terminal en la raíz del proyecto\n"
+            "2) Ejecuta: python api_app.py\n"
+            "3) Espera a que inicie en http://localhost:8000\n"
+            "4) Recarga esta página\n\n"
+            "La API permite análisis de reseñas individuales y resúmenes de tópicos."
+        )
+
+        st.info(
+            "Documentación de la API:\n"
+            "- Swagger UI: http://localhost:8000/docs\n"
+            "- README: API_README.md\n"
+            "- Guía rápida: QUICKSTART_API.md"
+        )
         st.stop()
-    
+
     # Dos secciones: Análisis Individual y Resumen de Tópicos
     st.markdown("---")
-    
-    subtab1, subtab2 = st.tabs(["🔍 Análisis Individual", "📊 Resumen de Tópicos"])
-    
+    subtab1, subtab2 = st.tabs(["Analisis Individual", "Resumen de Topicos"])
+
     # SUBTAB 1: Análisis de reseña individual
     with subtab1:
         st.markdown("#### Analiza una reseña del dataset")
-        st.markdown("Selecciona una reseña existente del dataset para analizar su sentimiento y tópicos detectados.")
-        
+        st.markdown("Selecciona una reseña existente para analizar su sentimiento y los tópicos detectados.")
+
         # Filtros para seleccionar reseña
         col_filter1, col_filter2 = st.columns(2)
-        
+
         with col_filter1:
-            # Filtro por hotel
             hotel_options = ["(Todos)"] + sorted(dff["Nombre del Hotel"].dropna().unique().tolist())
             selected_hotel = st.selectbox(
-                "🏨 Filtrar por Hotel:",
+                "Filtrar por Hotel:",
                 hotel_options,
                 help="Selecciona un hotel para ver sus reseñas"
             )
-        
+
         with col_filter2:
-            # Filtro por sentimiento (si está disponible)
             if use_vader and "Etiqueta de Sentimiento" in dff.columns:
-                sentiment_options = ["(Todos)"] + ["positivo", "negativo", "neutro"]
+                sentiment_options = ["(Todos)", "positivo", "negativo", "neutro"]
                 selected_sentiment = st.selectbox(
-                    "😊 Filtrar por Sentimiento:",
+                    "Filtrar por Sentimiento:",
                     sentiment_options,
-                    help="Filtra reseñas por su sentimiento"
+                    help="Filtra reseñas por sentimiento"
                 )
             else:
                 selected_sentiment = "(Todos)"
-        
+
         # Aplicar filtros
         dff_filtered = dff.copy()
-        
         if selected_hotel != "(Todos)":
             dff_filtered = dff_filtered[dff_filtered["Nombre del Hotel"] == selected_hotel]
-        
         if selected_sentiment != "(Todos)" and use_vader:
             dff_filtered = dff_filtered[dff_filtered["Etiqueta de Sentimiento"] == selected_sentiment]
-        
-        # Mostrar cantidad de reseñas disponibles
-        st.info(f"📊 Reseñas disponibles con estos filtros: **{len(dff_filtered):,}**")
-        
+
+        st.info(f"Reseñas disponibles con estos filtros: {len(dff_filtered):,}")
+
         if len(dff_filtered) == 0:
-            st.warning("⚠️ No hay reseñas con estos filtros. Ajusta los criterios de búsqueda.")
+            st.warning("No hay reseñas para esos filtros. Ajusta los criterios.")
         else:
-            # Crear lista de opciones para el selectbox
-            # Formato: "Hotel - Puntuación - Preview de reseña"
-            review_options = []
-            review_indices = []
-            
-            for idx, row in dff_filtered.head(100).iterrows():  # Limitar a 100 para performance
+            # Lista para el selector
+            review_options, review_indices = [], []
+            for idx, row in dff_filtered.head(100).iterrows():  # limitar a 100 por rendimiento
                 hotel_name = row["Nombre del Hotel"][:30]
                 score = row["Puntuación del Revisor"]
-                
-                # Obtener preview de la reseña
                 if "review_text" in row and pd.notna(row["review_text"]) and row["review_text"].strip():
                     preview = row["review_text"][:80].replace("\n", " ")
                 else:
                     pos_rev = row.get("Reseña Positiva", "")
                     neg_rev = row.get("Reseña Negativa", "")
-                    combined = f"{pos_rev} {neg_rev}".strip()
-                    preview = combined[:80].replace("\n", " ")
-                
+                    preview = f"{pos_rev} {neg_rev}".strip()[:80].replace("\n", " ")
                 if preview.strip():
-                    option_text = f"{hotel_name}... | ⭐{score} | {preview}..."
+                    option_text = f"{hotel_name}... | {score} | {preview}..."
                     review_options.append(option_text)
                     review_indices.append(idx)
-            
+
             if len(review_options) == 0:
-                st.warning("⚠️ No se encontraron reseñas con texto válido. Ajusta los filtros.")
+                st.warning("No se encontraron reseñas con texto válido en la muestra.")
             else:
-                # Selector de reseña
                 st.markdown("---")
-                st.markdown("##### 📝 Selecciona una Reseña")
-                
+                st.markdown("##### Selecciona una Reseña")
                 selected_review_idx = st.selectbox(
                     "Reseña:",
                     range(len(review_options)),
                     format_func=lambda x: review_options[x],
                     help="Selecciona una reseña para analizar"
                 )
-                
-                # Obtener la reseña seleccionada
+
                 actual_idx = review_indices[selected_review_idx]
                 selected_row = dff_filtered.loc[actual_idx]
-                
-                # Mostrar detalles de la reseña seleccionada
-                with st.expander("📋 Detalles de la Reseña Seleccionada", expanded=True):
+
+                # Detalles
+                with st.expander("Detalles de la Reseña Seleccionada", expanded=True):
                     col_det1, col_det2, col_det3 = st.columns(3)
-                    
                     with col_det1:
-                        st.metric("🏨 Hotel", selected_row["Nombre del Hotel"][:30] + "...")
-                    
+                        st.metric("Hotel", selected_row["Nombre del Hotel"][:30] + "...")
                     with col_det2:
-                        st.metric("⭐ Puntuación", f"{selected_row['Puntuación del Revisor']}/10")
-                    
+                        st.metric("Puntuación", f"{selected_row['Puntuación del Revisor']}/10")
                     with col_det3:
                         if "Etiqueta de Sentimiento" in selected_row:
-                            st.metric("� Sentimiento", selected_row["Etiqueta de Sentimiento"].capitalize())
+                            st.metric("Sentimiento (dataset)", selected_row["Etiqueta de Sentimiento"].capitalize())
                         else:
-                            st.metric("😊 Sentimiento", "N/A")
-                    
-                    # Mostrar texto completo de la reseña
+                            st.metric("Sentimiento (dataset)", "N/A")
+
                     st.markdown("**Texto de la Reseña:**")
-                    
                     if "review_text" in selected_row and pd.notna(selected_row["review_text"]) and selected_row["review_text"].strip():
                         review_text = selected_row["review_text"]
                     else:
                         pos_text = selected_row.get("Reseña Positiva", "").strip()
                         neg_text = selected_row.get("Reseña Negativa", "").strip()
                         review_text = f"{pos_text}. {neg_text}".strip(". ")
-                    
+
                     st.text_area(
                         "Reseña completa:",
                         value=review_text,
@@ -1613,122 +1727,91 @@ with tab_api:
                         disabled=True,
                         label_visibility="collapsed"
                     )
-                
+
                 # Botón de análisis
                 st.markdown("---")
-                col_btn1, col_btn2 = st.columns([1, 3])
-                
+                col_btn1, _ = st.columns([1, 3])
                 with col_btn1:
-                    analyze_btn = st.button("🚀 Analizar con API", type="primary", use_container_width=True)
-        
+                    analyze_btn = st.button("Analizar con API", key="analyze_api_btn", width="stretch")
+
                 if analyze_btn:
                     if len(review_text.strip()) < 10:
-                        st.warning("⚠️ La reseña seleccionada es demasiado corta para analizar")
+                        st.warning("La reseña seleccionada es demasiado corta para analizar.")
                     else:
-                        with st.spinner("🔄 Analizando reseña con la API... Esto puede tardar unos segundos"):
+                        with st.spinner("Analizando reseña con la API..."):
                             result = analyze_review_with_api(review_text)
-                        
+
                         if result:
-                            st.success("✅ Análisis completado")
-                            
-                            # Mostrar comparación con datos originales si están disponibles
+                            st.success("Análisis completado.")
+
+                            # Comparación con dataset si existe
                             if "Etiqueta de Sentimiento" in selected_row and pd.notna(selected_row["Etiqueta de Sentimiento"]):
                                 st.markdown("---")
-                                st.markdown("#### 🔄 Comparación: Dataset vs API")
-                                
+                                st.markdown("#### Comparación: Dataset vs API")
+
                                 col_comp1, col_comp2 = st.columns(2)
-                                
                                 with col_comp1:
-                                    st.markdown("**Sentimiento en Dataset (VADER original):**")
+                                    st.markdown("**Sentimiento en dataset (VADER original):**")
                                     original_sentiment = selected_row["Etiqueta de Sentimiento"]
                                     sentiment_class_orig = f"sentiment-{original_sentiment.lower()}"
                                     st.markdown(
                                         f'<div class="sentiment-badge {sentiment_class_orig}">{original_sentiment.upper()}</div>',
                                         unsafe_allow_html=True
                                     )
-                                    
                                     if "compound" in selected_row:
-                                        st.metric("Score Compuesto", f"{selected_row['compound']:.3f}")
-                                
+                                        st.metric("Score compuesto (dataset)", f"{selected_row['compound']:.3f}")
+
                                 with col_comp2:
-                                    st.markdown("**Sentimiento calculado por API:**")
+                                    st.markdown("**Sentimiento calculado por la API:**")
                                     api_sentiment = result['sentiment']['sentiment']
                                     sentiment_class_api = f"sentiment-{api_sentiment.lower()}"
                                     st.markdown(
                                         f'<div class="sentiment-badge {sentiment_class_api}">{api_sentiment.upper()}</div>',
                                         unsafe_allow_html=True
                                     )
-                                    st.metric("Score Compuesto", f"{result['sentiment']['compound_score']:.3f}")
-                                
-                                # Verificar si coinciden
+                                    st.metric("Score compuesto (API)", f"{result['sentiment']['compound_score']:.3f}")
+
                                 if original_sentiment == api_sentiment:
-                                    st.success("✅ Los sentimientos coinciden!")
+                                    st.success("Los sentimientos coinciden.")
                                 else:
-                                    st.info("ℹ️ Los sentimientos difieren. Esto puede deberse a diferencias en el procesamiento del texto.")
-                            
-                            # Mostrar texto limpio
-                            with st.expander("📝 Texto procesado por la API", expanded=False):
+                                    st.info("Los sentimientos difieren; puede deberse a diferencias de limpieza o tokenización.")
+
+                            # Texto limpio
+                            with st.expander("Texto procesado por la API", expanded=False):
                                 st.code(result['cleaned_text'], language=None)
-                            
+
                             st.markdown("---")
-                            
-                            # Sentimiento detallado de la API
-                            st.markdown("#### 📊 Análisis de Sentimiento Detallado (API)")
-                            
+                            st.markdown("#### Analisis de Sentimiento Detallado (API)")
+
                             sentiment = result['sentiment']
                             sentiment_label = sentiment['sentiment']
-                            
-                            # Badge de sentimiento
                             sentiment_class = f"sentiment-{sentiment_label.lower()}"
                             st.markdown(
                                 f'<div class="sentiment-badge {sentiment_class}">{sentiment_label.upper()}</div>',
                                 unsafe_allow_html=True
                             )
-                            
-                            # Métricas de sentimiento
+
                             col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-                            
                             with col_s1:
-                                st.metric(
-                                    "Score Compuesto",
-                                    f"{sentiment['compound_score']:.3f}",
-                                    help="Score general de sentimiento (-1 a 1)"
-                                )
-                            
+                                st.metric("Score compuesto", f"{sentiment['compound_score']:.3f}")
                             with col_s2:
-                                st.metric(
-                                    "😊 Positivo",
-                                    f"{sentiment['positive_score']:.3f}",
-                                    help="Proporción de palabras positivas"
-                                )
-                            
+                                st.metric("Positivo", f"{sentiment['positive_score']:.3f}")
                             with col_s3:
-                                st.metric(
-                                    "😐 Neutral",
-                                    f"{sentiment['neutral_score']:.3f}",
-                                    help="Proporción de palabras neutrales"
-                                )
-                            
+                                st.metric("Neutral", f"{sentiment['neutral_score']:.3f}")
                             with col_s4:
-                                st.metric(
-                                    "😞 Negativo",
-                                    f"{sentiment['negative_score']:.3f}",
-                                    help="Proporción de palabras negativas"
-                                )
-                            
-                            # Gráfico de barras
+                                st.metric("Negativo", f"{sentiment['negative_score']:.3f}")
+
                             fig_sentiment = go.Figure(data=[
                                 go.Bar(
                                     x=['Positivo', 'Neutral', 'Negativo'],
                                     y=[sentiment['positive_score'], sentiment['neutral_score'], sentiment['negative_score']],
                                     marker_color=['#10b981', '#6b7280', '#ef4444'],
-                                    text=[f"{sentiment['positive_score']:.2%}", 
-                                          f"{sentiment['neutral_score']:.2%}", 
+                                    text=[f"{sentiment['positive_score']:.2%}",
+                                          f"{sentiment['neutral_score']:.2%}",
                                           f"{sentiment['negative_score']:.2%}"],
                                     textposition='outside'
                                 )
                             ])
-                            
                             fig_sentiment.update_layout(
                                 title="Distribución de Sentimientos",
                                 yaxis_title="Proporción",
@@ -1736,48 +1819,45 @@ with tab_api:
                                 showlegend=False,
                                 template="plotly_white"
                             )
-                            
-                            st.plotly_chart(fig_sentiment, use_container_width=True)
-                            
+                            st.plotly_chart(
+                            fig_sentiment,
+                            width="stretch",
+                            config={
+                            "displayModeBar": False,   # oculta la barra de herramientas
+                            "responsive": True         # hace el chart responsive
+                                    }
+                                )
+
                             st.markdown("---")
-                            
-                            # Tópicos
-                            st.markdown("#### 🎯 Tópicos Detectados (LDA)")
-                            
+                            st.markdown("#### Topicos Detectados (LDA)")
                             if result['topics']:
-                                st.markdown(f"Se detectaron **{len(result['topics'])}** tópicos en esta reseña:")
-                                
+                                st.markdown(f"Se detectaron {len(result['topics'])} tópicos en esta reseña:")
                                 for topic in result['topics']:
-                                    with st.expander(f"🏷️ Tema {topic['topic_id']}", expanded=True):
+                                    with st.expander(f"Tema {topic['topic_id']}", expanded=True):
                                         keywords = topic['keywords'].split(", ")
-                                        
-                                        # Crear badges HTML para palabras clave
-                                        badges_html = '<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;">'
+                                        badges_html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">'
                                         for word in keywords:
                                             badges_html += f'<span class="topic-badge">{word}</span>'
                                         badges_html += '</div>'
-                                        
                                         st.markdown(badges_html, unsafe_allow_html=True)
                             else:
                                 st.info("No se detectaron tópicos específicos en esta reseña.")
-                            
-                            # Botón para descargar resultado
+
                             st.markdown("---")
                             result_json = json.dumps(result, indent=2, ensure_ascii=False)
                             st.download_button(
-                                label="💾 Descargar resultado (JSON)",
+                                label="Descargar resultado (JSON)",
                                 data=result_json,
                                 file_name=f"analisis_resena_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
                                 mime="application/json",
-                                use_container_width=True
+                                width="stretch"
                             )
-    
+
     # SUBTAB 2: Resumen de tópicos agregados
     with subtab2:
         st.markdown("#### Resumen de Tópicos Más Mencionados")
-        st.markdown("Obtén un resumen de los tópicos más frecuentes en reseñas positivas y negativas del dataset.")
-        
-        # Configuración
+        st.markdown("Genera un resumen de los tópicos más frecuentes en reseñas positivas y negativas.")
+
         col_cfg1, col_cfg2 = st.columns(2)
         with col_cfg1:
             n_topics = st.slider(
@@ -1785,164 +1865,117 @@ with tab_api:
                 min_value=3,
                 max_value=15,
                 value=8,
-                help="Más tópicos = más detalle pero más tiempo de procesamiento"
+                help="Más tópicos = más detalle (más tiempo)."
             )
-        
         with col_cfg2:
             max_reviews = st.select_slider(
                 "Máximo de reseñas a analizar:",
                 options=[1000, 2000, 5000, 10000, 20000, 50000],
                 value=10000,
-                help="Menos reseñas = más rápido pero menos representativo"
+                help="Menos reseñas = más rápido."
             )
-        
-        col_btn_sum1, col_btn_sum2 = st.columns([1, 3])
+
+        col_btn_sum1, _ = st.columns([1, 3])
         with col_btn_sum1:
-            generate_summary = st.button("📈 Generar Resumen", type="primary", use_container_width=True)
-        
+            generate_summary = st.button("Generar Resumen", key="gen_summary_btn", width="stretch")
+
         if generate_summary:
-            with st.spinner(f"🔄 Analizando hasta {max_reviews:,} reseñas... Esto puede tardar 30-90 segundos"):
+            with st.spinner(f"Analizando hasta {max_reviews:,} reseñas..."):
                 topics_data = get_topics_from_api(n_topics=n_topics, max_reviews=max_reviews)
-            
+
             if topics_data:
-                st.success("✅ Resumen generado exitosamente")
-                
-                # Información general
+                st.success("Resumen generado correctamente.")
+
                 st.markdown("---")
-                st.markdown("#### 📊 Información General")
-                
+                st.markdown("#### Información General")
                 col_info1, col_info2, col_info3, col_info4 = st.columns(4)
-                
                 with col_info1:
                     st.metric(
-                        "📚 Fuente",
+                        "Fuente",
                         topics_data['data_source'].replace('hotel_reviews_processed.csv', 'Procesado').replace('Hotel_Reviews.csv', 'Raw')
                     )
-                
                 with col_info2:
-                    st.metric(
-                        "📊 Total Analizado",
-                        f"{topics_data['total_reviews_analyzed']:,}"
-                    )
-                
+                    st.metric("Total analizado", f"{topics_data['total_reviews_analyzed']:,}")
                 with col_info3:
                     pos_count = topics_data['positive_topics']['total_reviews']
-                    st.metric(
-                        "😊 Positivas",
-                        f"{pos_count:,}",
-                        delta=f"{pos_count/topics_data['total_reviews_analyzed']*100:.1f}%"
-                    )
-                
+                    st.metric("Positivas", f"{pos_count:,}",
+                              delta=f"{pos_count/topics_data['total_reviews_analyzed']*100:.1f}%")
                 with col_info4:
                     neg_count = topics_data['negative_topics']['total_reviews']
-                    st.metric(
-                        "😞 Negativas",
-                        f"{neg_count:,}",
-                        delta=f"{neg_count/topics_data['total_reviews_analyzed']*100:.1f}%"
-                    )
-                
+                    st.metric("Negativas", f"{neg_count:,}",
+                              delta=f"{neg_count/topics_data['total_reviews_analyzed']*100:.1f}%")
+
                 st.markdown("---")
-                
-                # Tópicos en dos columnas
                 col_pos, col_neg = st.columns(2)
-                
+
                 with col_pos:
-                    st.markdown("### 😊 TÓPICOS EN RESEÑAS POSITIVAS")
-                    st.markdown(f"*{topics_data['positive_topics']['total_reviews']:,} reseñas analizadas*")
-                    
+                    st.markdown("### Tópicos en Reseñas Positivas")
+                    st.markdown(f"{topics_data['positive_topics']['total_reviews']:,} reseñas analizadas")
                     for topic in topics_data['positive_topics']['topics']:
-                        with st.container():
-                            st.markdown(f"""
-                            <div class="api-card" style="border-left-color: #10b981;">
-                                <h4 style="color: #10b981; margin-bottom: 10px;">🏷️ Tema {topic['topic_id']}</h4>
-                                <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 8px;">Palabras clave:</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            keywords = topic['keywords'].split(", ")
-                            badges_html = '<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: -10px; margin-bottom: 15px;">'
-                            for word in keywords[:10]:  # Mostrar máximo 10 palabras
-                                badges_html += f'<span class="topic-badge" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">{word}</span>'
-                            badges_html += '</div>'
-                            st.markdown(badges_html, unsafe_allow_html=True)
-                
+                        st.markdown(
+                            '<div class="api-card" style="border-left-color:#10b981;">'
+                            '<h4 style="color:#10b981;margin-bottom:10px;">Tema {}</h4>'
+                            '<p style="color:#64748b;font-size:0.9rem;margin-bottom:8px;">Palabras clave:</p>'
+                            '</div>'.format(topic['topic_id']),
+                            unsafe_allow_html=True
+                        )
+                        keywords = topic['keywords'].split(", ")
+                        badges_html = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:-10px;margin-bottom:15px;">'
+                        for word in keywords[:10]:
+                            badges_html += f'<span class="topic-badge" style="background:linear-gradient(135deg,#10b981 0%,#059669 100%);">{word}</span>'
+                        badges_html += '</div>'
+                        st.markdown(badges_html, unsafe_allow_html=True)
+
                 with col_neg:
-                    st.markdown("### 😞 TÓPICOS EN RESEÑAS NEGATIVAS")
-                    st.markdown(f"*{topics_data['negative_topics']['total_reviews']:,} reseñas analizadas*")
-                    
+                    st.markdown("### Tópicos en Reseñas Negativas")
+                    st.markdown(f"{topics_data['negative_topics']['total_reviews']:,} reseñas analizadas")
                     for topic in topics_data['negative_topics']['topics']:
-                        with st.container():
-                            st.markdown(f"""
-                            <div class="api-card" style="border-left-color: #ef4444;">
-                                <h4 style="color: #ef4444; margin-bottom: 10px;">🏷️ Tema {topic['topic_id']}</h4>
-                                <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 8px;">Palabras clave:</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            keywords = topic['keywords'].split(", ")
-                            badges_html = '<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: -10px; margin-bottom: 15px;">'
-                            for word in keywords[:10]:
-                                badges_html += f'<span class="topic-badge" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">{word}</span>'
-                            badges_html += '</div>'
-                            st.markdown(badges_html, unsafe_allow_html=True)
-                
-                # Comparación visual
+                        st.markdown(
+                            '<div class="api-card" style="border-left-color:#ef4444;">'
+                            '<h4 style="color:#ef4444;margin-bottom:10px;">Tema {}</h4>'
+                            '<p style="color:#64748b;font-size:0.9rem;margin-bottom:8px;">Palabras clave:</p>'
+                            '</div>'.format(topic['topic_id']),
+                            unsafe_allow_html=True
+                        )
+                        keywords = topic['keywords'].split(", ")
+                        badges_html = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:-10px;margin-bottom:15px;">'
+                        for word in keywords[:10]:
+                            badges_html += f'<span class="topic-badge" style="background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);">{word}</span>'
+                        badges_html += '</div>'
+                        st.markdown(badges_html, unsafe_allow_html=True)
+
                 st.markdown("---")
-                st.markdown("#### 📊 Comparación de Tópicos")
-                
-                # Crear tabla comparativa
+                st.markdown("#### Comparación de Tópicos")
                 comparison_data = []
-                
-                for i, (pos_topic, neg_topic) in enumerate(zip(
-                    topics_data['positive_topics']['topics'],
-                    topics_data['negative_topics']['topics']
-                ), 1):
+                for i, (pos_topic, neg_topic) in enumerate(
+                    zip(topics_data['positive_topics']['topics'], topics_data['negative_topics']['topics']), 1
+                ):
                     comparison_data.append({
                         'Tema #': i,
-                        '😊 Positivo': pos_topic['keywords'][:60] + "...",
-                        '😞 Negativo': neg_topic['keywords'][:60] + "..."
+                        'Positivo': pos_topic['keywords'][:60] + "...",
+                        'Negativo': neg_topic['keywords'][:60] + "..."
                     })
-                
                 df_comparison = pd.DataFrame(comparison_data)
-                st.dataframe(df_comparison, use_container_width=True, hide_index=True)
-                
-                # Botón para descargar
+                st.dataframe(df_comparison, width="stretch", hide_index=True)
+
                 st.markdown("---")
                 topics_json = json.dumps(topics_data, indent=2, ensure_ascii=False)
                 st.download_button(
-                    label="💾 Descargar resumen completo (JSON)",
+                    label="Descargar resumen (JSON)",
                     data=topics_json,
                     file_name=f"resumen_topicos_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
                     mime="application/json",
-                    use_container_width=True
+                    width="stretch"
                 )
         else:
-            st.info("👆 Configura los parámetros y haz clic en 'Generar Resumen' para obtener el análisis de tópicos.")
-            
-            # Mostrar información de la API
+            st.info("Configura los parámetros y pulsa Generar Resumen para obtener el análisis de tópicos.")
             st.markdown("---")
-            st.markdown("#### 📖 Sobre esta funcionalidad")
-            
-            st.markdown("""
-            Esta sección utiliza la **API REST de FastAPI** para:
-            
-            1. **Cargar el dataset procesado** (o raw si no está disponible)
-            2. **Filtrar reseñas** por sentimiento (positivo/negativo)
-            3. **Extraer tópicos** usando LDA (Latent Dirichlet Allocation)
-            4. **Retornar resultados** en formato JSON estructurado
-            
-            **Ventajas de usar la API:**
-            - ✅ Procesamiento centralizado y optimizado
-            - ✅ Reutilizable desde otras aplicaciones
-            - ✅ Cache de resultados para mejor rendimiento
-            - ✅ Documentación automática (Swagger)
-            
-            **Documentación completa:**
-            - 📖 [API_README.md](API_README.md)
-            - 🚀 [QUICKSTART_API.md](QUICKSTART_API.md)
-            - 📊 [API_SUMMARY.md](API_SUMMARY.md)
-            - 🌐 [Swagger UI](http://localhost:8000/docs)
-            """)
+            st.markdown("#### Sobre esta funcionalidad")
+            st.markdown(
+                "Esta sección usa la API de FastAPI para: "
+                "cargar el dataset procesado, filtrar reseñas por sentimiento, extraer tópicos con LDA "
+                "y devolver resultados en JSON. Ventajas: procesamiento centralizado, reutilizable, cache y Swagger."
+            )
 
 # ======================
 # 11. Footer
