@@ -1728,130 +1728,172 @@ with tab_api:
                         label_visibility="collapsed"
                     )
 
-                # Botón de análisis
+# Botón de análisis
+st.markdown("---")
+col_btn1, _ = st.columns([1, 3])
+with col_btn1:
+    analyze_btn = st.button("Analizar con API", key="analyze_api_btn")
+
+if analyze_btn:
+    if len(review_text.strip()) < 10:
+        st.warning("La reseña seleccionada es demasiado corta para analizar.")
+    else:
+        with st.spinner("Analizando reseña con la API..."):
+            result = analyze_review_with_api(review_text)
+
+        if result:
+            st.success("Análisis completado.")
+
+            # Comparación con dataset si existe
+            if "Etiqueta de Sentimiento" in selected_row and pd.notna(selected_row["Etiqueta de Sentimiento"]):
                 st.markdown("---")
-                col_btn1, _ = st.columns([1, 3])
-                with col_btn1:
-                    analyze_btn = st.button("Analizar con API", key="analyze_api_btn", width="stretch")
+                st.markdown("#### Comparación: Dataset vs API")
 
-                if analyze_btn:
-                    if len(review_text.strip()) < 10:
-                        st.warning("La reseña seleccionada es demasiado corta para analizar.")
-                    else:
-                        with st.spinner("Analizando reseña con la API..."):
-                            result = analyze_review_with_api(review_text)
+                col_comp1, col_comp2 = st.columns(2)
+                with col_comp1:
+                    st.markdown("**Sentimiento en dataset (VADER original):**")
+                    original_sentiment = selected_row["Etiqueta de Sentimiento"]
+                    sentiment_class_orig = f"sentiment-{original_sentiment.lower()}"
+                    st.markdown(
+                        f'<div class="sentiment-badge {sentiment_class_orig}">{original_sentiment.upper()}</div>',
+                        unsafe_allow_html=True
+                    )
+                    if "compound" in selected_row:
+                        # Mostrar también en % normalizado para coherencia visual
+                        ds_compound = selected_row["compound"]
+                        ds_compound_pct = (ds_compound + 1) / 2 * 100
+                        st.metric("Score compuesto (dataset)", f"{ds_compound_pct:.1f} %")
 
-                        if result:
-                            st.success("Análisis completado.")
+                with col_comp2:
+                    st.markdown("**Sentimiento calculado por la API:**")
+                    api_sentiment = result['sentiment']['sentiment']
+                    sentiment_class_api = f"sentiment-{api_sentiment.lower()}"
+                    st.markdown(
+                        f'<div class="sentiment-badge {sentiment_class_api}">{api_sentiment.upper()}</div>',
+                        unsafe_allow_html=True
+                    )
+                    api_compound_pct = (result['sentiment']['compound_score'] + 1) / 2 * 100
+                    st.metric("Score compuesto (API)", f"{api_compound_pct:.1f} %")
 
-                            # Comparación con dataset si existe
-                            if "Etiqueta de Sentimiento" in selected_row and pd.notna(selected_row["Etiqueta de Sentimiento"]):
-                                st.markdown("---")
-                                st.markdown("#### Comparación: Dataset vs API")
+                if original_sentiment == api_sentiment:
+                    st.success("Los sentimientos coinciden.")
+                else:
+                    st.info("Los sentimientos difieren; puede deberse a diferencias de limpieza o tokenización.")
 
-                                col_comp1, col_comp2 = st.columns(2)
-                                with col_comp1:
-                                    st.markdown("**Sentimiento en dataset (VADER original):**")
-                                    original_sentiment = selected_row["Etiqueta de Sentimiento"]
-                                    sentiment_class_orig = f"sentiment-{original_sentiment.lower()}"
-                                    st.markdown(
-                                        f'<div class="sentiment-badge {sentiment_class_orig}">{original_sentiment.upper()}</div>',
-                                        unsafe_allow_html=True
-                                    )
-                                    if "compound" in selected_row:
-                                        st.metric("Score compuesto (dataset)", f"{selected_row['compound']:.3f}")
+        # Texto limpio
+        with st.expander("Texto procesado por la API", expanded=False):
+            st.code(result['cleaned_text'], language=None)
 
-                                with col_comp2:
-                                    st.markdown("**Sentimiento calculado por la API:**")
-                                    api_sentiment = result['sentiment']['sentiment']
-                                    sentiment_class_api = f"sentiment-{api_sentiment.lower()}"
-                                    st.markdown(
-                                        f'<div class="sentiment-badge {sentiment_class_api}">{api_sentiment.upper()}</div>',
-                                        unsafe_allow_html=True
-                                    )
-                                    st.metric("Score compuesto (API)", f"{result['sentiment']['compound_score']:.3f}")
+        st.markdown("---")
+        
+        st.markdown("#### Análisis de Sentimiento Detallado (API)")
 
-                                if original_sentiment == api_sentiment:
-                                    st.success("Los sentimientos coinciden.")
-                                else:
-                                    st.info("Los sentimientos difieren; puede deberse a diferencias de limpieza o tokenización.")
+        sentiment = result['sentiment']
 
-                            # Texto limpio
-                            with st.expander("Texto procesado por la API", expanded=False):
-                                st.code(result['cleaned_text'], language=None)
+          # porcentajes de cada componente
+        pos_pct = sentiment["positive_score"] * 100
+        neu_pct = sentiment["neutral_score"] * 100
+        neg_pct = sentiment["negative_score"] * 100
 
-                            st.markdown("---")
-                            st.markdown("#### Analisis de Sentimiento Detallado (API)")
+          # identifica el dominante para resaltarlo
+        dom_val = max(pos_pct, neu_pct, neg_pct)
+        is_dom = lambda v: " active" if abs(v - dom_val) < 1e-9 else ""
 
-                            sentiment = result['sentiment']
-                            sentiment_label = sentiment['sentiment']
-                            sentiment_class = f"sentiment-{sentiment_label.lower()}"
-                            st.markdown(
-                                f'<div class="sentiment-badge {sentiment_class}">{sentiment_label.upper()}</div>',
-                                unsafe_allow_html=True
-                            )
+          # header con 3 badges (siempre visibles)
+        header_html = f"""
+<div class="sent-row">
+  <div class="sent-badge pos{is_dom(pos_pct)}">POSITIVO {pos_pct:.1f}%</div>
+  <div class="sent-badge neu{is_dom(neu_pct)}">NEUTRAL {neu_pct:.1f}%</div>
+  <div class="sent-badge neg{is_dom(neg_pct)}">NEGATIVO {neg_pct:.1f}%</div>
+</div>
+<style>
+  .sent-row{{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0 14px}}
+  .sent-badge{{padding:6px 12px;border-radius:999px;font-weight:600;font-size:.95rem;border:1px solid transparent}}
+  .sent-badge.pos{{background:#064e3b;color:#a7f3d0;border-color:#10b981}}
+  .sent-badge.neu{{background:#374151;color:#e5e7eb;border-color:#6b7280}}
+  .sent-badge.neg{{background:#7f1d1d;color:#fecaca;border-color:#ef4444}}
+  .sent-badge.active{{box-shadow:0 0 0 2px rgba(255,255,255,.35) inset}}
+</style>
+"""
+        st.markdown(header_html, unsafe_allow_html=True)
 
-                            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-                            with col_s1:
-                                st.metric("Score compuesto", f"{sentiment['compound_score']:.3f}")
-                            with col_s2:
-                                st.metric("Positivo", f"{sentiment['positive_score']:.3f}")
-                            with col_s3:
-                                st.metric("Neutral", f"{sentiment['neutral_score']:.3f}")
-                            with col_s4:
-                                st.metric("Negativo", f"{sentiment['negative_score']:.3f}")
 
-                            fig_sentiment = go.Figure(data=[
-                                go.Bar(
-                                    x=['Positivo', 'Neutral', 'Negativo'],
-                                    y=[sentiment['positive_score'], sentiment['neutral_score'], sentiment['negative_score']],
-                                    marker_color=['#10b981', '#6b7280', '#ef4444'],
-                                    text=[f"{sentiment['positive_score']:.2%}",
-                                          f"{sentiment['neutral_score']:.2%}",
-                                          f"{sentiment['negative_score']:.2%}"],
-                                    textposition='outside'
-                                )
-                            ])
-                            fig_sentiment.update_layout(
-                                title="Distribución de Sentimientos",
-                                yaxis_title="Proporción",
-                                height=350,
-                                showlegend=False,
-                                template="plotly_white"
-                            )
-                            st.plotly_chart(
-                            fig_sentiment,
-                            width="stretch",
-                            config={
-                            "displayModeBar": False,   # oculta la barra de herramientas
-                            "responsive": True         # hace el chart responsive
-                                    }
-                                )
+        # Métricas de sentimiento (normalizadas a porcentaje)
+        compound_percent = (sentiment['compound_score'] + 1) / 2 * 100  # -1..1 -> 0..100
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
-                            st.markdown("---")
-                            st.markdown("#### Topicos Detectados (LDA)")
-                            if result['topics']:
-                                st.markdown(f"Se detectaron {len(result['topics'])} tópicos en esta reseña:")
-                                for topic in result['topics']:
-                                    with st.expander(f"Tema {topic['topic_id']}", expanded=True):
-                                        keywords = topic['keywords'].split(", ")
-                                        badges_html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">'
-                                        for word in keywords:
-                                            badges_html += f'<span class="topic-badge">{word}</span>'
-                                        badges_html += '</div>'
-                                        st.markdown(badges_html, unsafe_allow_html=True)
-                            else:
-                                st.info("No se detectaron tópicos específicos en esta reseña.")
+        with col_s1:
+            st.metric(
+                "Score compuesto",
+                f"{compound_percent:.1f} %",
+                help="Score general normalizado a escala 0–100 % (50 % = neutro)"
+            )
+        with col_s2:
+            st.metric("Positivo", f"{sentiment['positive_score'] * 100:.1f} %", help="Proporción de palabras positivas")
+        with col_s3:
+            st.metric("Neutral", f"{sentiment['neutral_score'] * 100:.1f} %", help="Proporción de palabras neutrales")
+        with col_s4:
+            st.metric("Negativo", f"{sentiment['negative_score'] * 100:.1f} %", help="Proporción de palabras negativas")
 
-                            st.markdown("---")
-                            result_json = json.dumps(result, indent=2, ensure_ascii=False)
-                            st.download_button(
-                                label="Descargar resultado (JSON)",
-                                data=result_json,
-                                file_name=f"analisis_resena_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
-                                mime="application/json",
-                                width="stretch"
-                            )
+        # Gráfico de barras: eje Y en proporción (0–1), etiquetas en %
+        fig_sentiment = go.Figure(
+            data=[
+                go.Bar(
+                    x=["Positivo", "Neutral", "Negativo"],
+                    y=[
+                        sentiment["positive_score"],
+                        sentiment["neutral_score"],
+                        sentiment["negative_score"]
+                    ],
+                    marker=dict(color=["#10b981", "#6b7280", "#ef4444"]),
+                    text=[
+                        f"{sentiment['positive_score'] * 100:.1f} %",
+                        f"{sentiment['neutral_score'] * 100:.1f} %",
+                        f"{sentiment['negative_score'] * 100:.1f} %"
+                    ],
+                    textposition="outside",
+                    textfont=dict(size=14)
+                )
+            ]
+        )
+
+        fig_sentiment.update_layout(
+            title=dict(text="Distribución de Sentimientos", x=0.5, xanchor="center"),
+            yaxis=dict(title="Proporción", tickformat=".0%", range=[0, 1]),
+            xaxis=dict(title="Tipo de Sentimiento"),
+            height=400,
+            plot_bgcolor="#0f172a",
+            paper_bgcolor="#0f172a",
+            font=dict(color="white"),
+            margin=dict(l=30, r=30, t=60, b=30)
+        )
+
+        st.plotly_chart(fig_sentiment, width="stretch")
+
+        st.markdown("---")
+        st.markdown("#### Tópicos Detectados (LDA)")
+        if result["topics"]:
+            st.markdown(f"Se detectaron {len(result['topics'])} tópicos en esta reseña:")
+            for topic in result["topics"]:
+                with st.expander(f"Tema {topic['topic_id']}", expanded=True):
+                    keywords = topic["keywords"].split(", ")
+                    badges_html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">'
+                    for word in keywords:
+                        badges_html += f'<span class="topic-badge">{word}</span>'
+                    badges_html += "</div>"
+                    st.markdown(badges_html, unsafe_allow_html=True)
+        else:
+            st.info("No se detectaron tópicos específicos en esta reseña.")
+
+        st.markdown("---")
+        result_json = json.dumps(result, indent=2, ensure_ascii=False)
+        st.download_button(
+            label="Descargar resultado (JSON)",
+            data=result_json.encode('utf-8'),
+            file_name=f"analisis_resena_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
 
     # SUBTAB 2: Resumen de tópicos agregados
     with subtab2:
