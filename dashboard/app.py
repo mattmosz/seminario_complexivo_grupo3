@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from wordcloud import WordCloud
 
 # ======================
-# 1. Configuración Inicial
+# 1. Configuración Inicial - PRIMERO
 # ======================
 st.set_page_config(
     page_title="Booking.com - Analytics Dashboard",
@@ -21,15 +21,23 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------- Configuración de API ----------
-# Usar secrets de Streamlit Cloud si están disponibles, sino local
-if "API_URL" in st.secrets:
-    API_URL = st.secrets["API_URL"]
-    API_TIMEOUT = st.secrets.get("API_TIMEOUT", 10)  # Reducido a 10s
-else:
-    # Desarrollo local
-    API_URL = os.getenv("API_URL", "http://localhost:8000")
-    API_TIMEOUT = int(os.getenv("API_TIMEOUT", "10"))  # Reducido a 10s
+# Mostrar algo INMEDIATAMENTE para que Streamlit Cloud sepa que estamos vivos
+st.title("📊 Cargando Dashboard...")
+st.caption("Inicializando componentes...")
+
+# ---------- Configuración de API (DESPUÉS de st.set_page_config) ----------
+try:
+    if "API_URL" in st.secrets:
+        API_URL = st.secrets["API_URL"]
+        API_TIMEOUT = st.secrets.get("API_TIMEOUT", 10)
+    else:
+        # Desarrollo local
+        API_URL = os.getenv("API_URL", "http://localhost:8000")
+        API_TIMEOUT = int(os.getenv("API_TIMEOUT", "10"))
+except Exception as e:
+    # Si falla, usar valores por defecto
+    API_URL = "http://localhost:8000"
+    API_TIMEOUT = 10
 
 # ---------- Funciones para integración con API ----------
 
@@ -714,12 +722,19 @@ def load_data() -> pd.DataFrame | None:
 # --- Inicialización INSTANTÁNEA del dashboard ---
 # ESTRATEGIA: Dashboard inicia inmediatamente, sin esperar API
 
+# Limpiar el título temporal
+st.empty()
+
 # Inicializar session_state PRIMERO (antes de cualquier consulta)
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
     st.session_state.df = None
     st.session_state.api_checked = False
     st.session_state.api_online = False  # Asumir offline por defecto
+    
+    # Mostrar que estamos vivos
+    with st.spinner("⚡ Inicializando dashboard..."):
+        pass  # Pasar inmediatamente
 
 # NO verificar API en el primer render (para que Streamlit Cloud cargue rápido)
 # Solo verificar cuando el usuario interactúe
