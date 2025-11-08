@@ -21,63 +21,93 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------- Conectar Streamlit con scripts/main.py ----------
-import subprocess, sys, time
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]          # raíz del repo
-RAW_PATH = ROOT / "data" / "Hotel_Reviews.csv"
-PROCESSED_PATH = ROOT / "data" / "hotel_reviews_processed.csv"
-MAIN_PY = ROOT / "main.py"
-
-def processed_is_stale(max_age_hours: int = 24) -> bool:
-    """Devuelve True si el procesado no existe o es muy viejo."""
-    if not PROCESSED_PATH.exists():
-        return True
-    age_hours = (time.time() - PROCESSED_PATH.stat().st_mtime) / 3600.0
-    return age_hours > max_age_hours
-
-def run_analyze_cli(sample: int = 0,
-                    stream: bool = True,
-                    chunk: int = 100_000,
-                    topics: bool = False,
-                    skip_sentiment: bool = False) -> tuple[bool, str]:
-    if not RAW_PATH.exists():
-        return False, f" No se encontró el RAW en: {RAW_PATH}"
-    if not MAIN_PY.exists():
-        return False, f" No se encontró main.py en: {MAIN_PY}"
-
-    cmd = [sys.executable, str(MAIN_PY)]
-    if stream:
-        cmd += ["--stream"]
-    if sample > 0:
-        cmd += ["--sample", str(sample)]
-    if chunk:
-        cmd += ["--chunk-size", str(chunk)]
-    if topics:
-        cmd += ["--topics"]
-    if skip_sentiment:
-        cmd += ["--skip-sentiment"]  # <- ejecuta solo limpieza (incluye países)
-
-    try:
-        res = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
-        ok = (res.returncode == 0)
-        log = res.stdout + "\n" + res.stderr
-        return ok, log
-    except Exception as e:
-        return False, f" Error al ejecutar main.py: {e}"
+# ---------- Configuración de API ----------
+# Usar secrets de Streamlit Cloud si están disponibles, sino local
+if "API_URL" in st.secrets:
+    API_URL = st.secrets["API_URL"]
+    API_TIMEOUT = st.secrets.get("API_TIMEOUT", 30)
+else:
+    # Desarrollo local
+    API_URL = os.getenv("API_URL", "http://localhost:8000")
+    API_TIMEOUT = int(os.getenv("API_TIMEOUT", "30"))
 
 # ---------- Funciones para integración con API ----------
-API_URL = "https://cranky-uncreatively-lannie.ngrok-free.dev"
 
 @st.cache_data(ttl=60)
 def check_api_available() -> bool:
     """Verifica si la API está disponible"""
     try:
         res = requests.get(f"{API_URL}/health", timeout=5)
-        return res.status_code == 200 and res.json().get("status") == "healthy"
+        return res.status_code == 200
     except:
         return False
+
+@st.cache_data(ttl=300)
+def get_stats_from_api() -> dict | None:
+    """Obtiene estadísticas generales desde la API"""
+    try:
+        response = requests.get(f"{API_URL}/stats", timeout=10)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except:
+        return None
+
+@st.cache_data(ttl=300)
+def get_hotels_from_api() -> list:
+    """Obtiene lista de hoteles desde la API"""
+    try:
+        response = requests.get(f"{API_URL}/hotels", timeout=10)
+        if response.status_code == 200:
+            return response.json().get("hotels", [])
+        return []
+    except:
+        return []
+
+@st.cache_data(ttl=300)
+def get_nationalities_from_api(limit: int = 50) -> list:
+    """Obtiene lista de nacionalidades desde la API"""
+    try:
+        response = requests.get(f"{API_URL}/nationalities", params={"limit": limit}, timeout=10)
+        if response.status_code == 200:
+            return response.json().get("nationalities", [])
+        return []
+    except:
+        return []
+
+def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None, 
+                                  score_min=0.0, score_max=10.0, limit=None) -> dict | None:
+    """Obtiene reseñas filtradas desde la API"""
+    try:
+        filters = {
+            "hotel": hotel if hotel != "(Todos)" else None,
+            "sentiment": sentiment if sentiment != "(Todos)" else None,
+            "nationality": nationality if nationality != "(Todas)" else None,
+            "score_min": score_min,
+            "score_max": score_max,
+            "limit": limit
+        }
+        
+        response = requests.post(
+            f"{API_URL}/reviews/filter",
+            json=filters,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
+            return None
+    except requests.exceptions.Timeout:
+        st.error("⏱️ La petición excedió el tiempo límite")
+        return None
+    except requests.exceptions.ConnectionError:
+        st.error("🔌 No se pudo conectar a la API")
+        return None
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
+        return None
 
 def analyze_review_with_api(review_text: str) -> dict | None:
     """Analiza una reseña usando la API"""
@@ -85,7 +115,7 @@ def analyze_review_with_api(review_text: str) -> dict | None:
         response = requests.post(
             f"{API_URL}/reviews/analyze",
             json={"text": review_text},
-            timeout=30
+            timeout=API_TIMEOUT
         )
         if response.status_code == 200:
             return response.json()
@@ -93,22 +123,22 @@ def analyze_review_with_api(review_text: str) -> dict | None:
             st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
             return None
     except requests.exceptions.Timeout:
-        st.error("⏱️ La petición excedió el tiempo límite (30s)")
+        st.error(f"⏱️ La petición excedió el tiempo límite ({API_TIMEOUT}s)")
         return None
     except requests.exceptions.ConnectionError:
-        st.error("🔌 No se pudo conectar a la API. ¿Está el servidor corriendo?")
+        st.error(f"🔌 No se pudo conectar a la API en {API_URL}")
         return None
     except Exception as e:
         st.error(f"❌ Error inesperado: {e}")
         return None
 
-@st.cache_data(ttl=300)
-def get_topics_from_api(n_topics: int = 8, max_reviews: int = 10000) -> dict | None:
-    """Obtiene resumen de tópicos desde la API"""
+def get_topics_from_api(filters: dict, n_topics: int = 8) -> dict | None:
+    """Obtiene resumen de tópicos desde la API con filtros"""
     try:
-        response = requests.get(
+        response = requests.post(
             f"{API_URL}/reviews/topics",
-            params={"n_topics": n_topics, "max_reviews": max_reviews},
+            json=filters,
+            params={"n_topics": n_topics},
             timeout=120
         )
         if response.status_code == 200:
@@ -117,13 +147,28 @@ def get_topics_from_api(n_topics: int = 8, max_reviews: int = 10000) -> dict | N
             st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
             return None
     except requests.exceptions.Timeout:
-        st.error(" La petición excedió el tiempo límite (120s)")
+        st.error("⏱️ La petición excedió el tiempo límite (120s)")
         return None
     except requests.exceptions.ConnectionError:
-        st.error(" No se pudo conectar a la API. ¿Está el servidor corriendo?")
+        st.error("🔌 No se pudo conectar a la API")
         return None
     except Exception as e:
-        st.error(f" Error inesperado: {e}")
+        st.error(f"❌ Error inesperado: {e}")
+        return None
+
+def get_wordcloud_data_from_api(filters: dict, max_words: int = 100, sample_size: int = 3000) -> dict | None:
+    """Obtiene datos para word cloud desde la API"""
+    try:
+        response = requests.post(
+            f"{API_URL}/reviews/wordcloud",
+            json=filters,
+            params={"max_words": max_words, "sample_size": sample_size},
+            timeout=60
+        )
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except:
         return None
 
 # ======================
@@ -210,7 +255,6 @@ st.markdown("""
         background: white;
         padding: 1.5rem 2rem;
         border-radius: 12px;
-        margin-top: 2rem;
         margin-bottom: 1.5rem;
         box-shadow: 0 4px 20px rgba(0,0,0,0.15);
         text-align: center;
@@ -594,142 +638,6 @@ st.markdown("""
     margin-left: 18rem !important; /* ajusta al ancho real del sidebar */
   }
 }
-/* ====== API SECTION — responsive & clean ====== */
-.api-section { display: grid; gap: 1rem; }
-
-/* Fila de estado (online/offline + botón refrescar) */
-.api-status-row {
-  display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
-}
-
-/* Dos columnas principales (p. ej. comparaciones / métricas) */
-.api-two-col {
-  display: grid; grid-template-columns: 1.2fr 1fr; gap: 1rem;
-}
-
-/* Grid para tarjetas de tópicos y resultados */
-.api-cards {
-  display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;
-}
-
-/* Contenedor de acciones (botones) */
-.api-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-.api-actions .stButton > button { width: 100%; }
-
-/* Textarea del texto procesado */
-.api-textarea textarea { min-height: 180px; }
-
-/* Ajustes de las badges y cards en esta sección */
-.api-section .api-card { margin: 0; }
-.api-section .sentiment-badge { width: fit-content; }
-
-/* Breakpoints */
-@media (max-width: 1200px) {
-  .api-two-col { grid-template-columns: 1fr; }
-  .api-cards   { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 768px) {
-  .api-status-row { flex-direction: column; align-items: stretch; }
-  .api-actions .stButton > button { width: 100% !important; }
-}
-/* ===== API Section Cleanup ===== */
-.api-section {
-  background: white;
-  border-radius: 14px;
-  padding: 1.25rem;
-  box-shadow: 0 4px 18px rgba(0,0,0,0.10);
-  border-left: 5px solid #E91E8C;
-  margin-top: 1rem;
-}
-
-.api-section .api-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 0.75rem;
-}
-
-.api-section .api-title {
-  font-size: 1.25rem;
-  font-weight: 800;
-  color: #1E3A5F;
-  letter-spacing: .3px;
-  text-transform: uppercase;
-  margin: 0;
-}
-
-.api-section .api-subtitle {
-  font-size: .95rem;
-  color: #64748b;
-  margin: 0;
-}
-
-.api-status-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: .75rem;
-  align-items: center;
-  margin: .5rem 0 1rem 0;
-}
-
-.api-status-online,
-.api-status-offline {
-  padding: .5rem .875rem;
-  border-radius: 10px;
-  font-weight: 750;
-  font-size: .9rem;
-  text-align: center;
-}
-
-.api-status-online {
-  background: linear-gradient(135deg, #10b981, #059669);
-  color: #fff;
-}
-
-.api-status-offline {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
-  color: #fff;
-}
-
-.api-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
-
-.api-card-clean {
-  background: #fff;
-  border-radius: 12px;
-  padding: 1rem 1.25rem;
-  border: 1px solid rgba(30,58,95,.08);
-}
-
-/* métricas compactas arriba del gráfico */
-.api-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(140px,1fr));
-  gap: .75rem;
-  margin: .75rem 0 1rem 0;
-}
-.api-metrics .stMetric {
-  background: linear-gradient(135deg, #667eea0d, #764ba20d);
-  border-radius: 10px;
-  padding: .5rem .75rem;
-}
-
-/* responsive */
-@media (max-width: 1100px) {
-  .api-grid-2 { grid-template-columns: 1fr; }
-  .api-metrics { grid-template-columns: repeat(2, 1fr); }
-  .api-section .api-title { font-size: 1.1rem; }
-}
-@media (max-width: 700px) {
-  .api-metrics { grid-template-columns: 1fr; }
-  .api-status-row { grid-template-columns: 1fr; }
-}
-
 
 </style>
 """, unsafe_allow_html=True)
@@ -754,72 +662,54 @@ DATA_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "hotel_reviews_
 BASE_API_URL = None  # Ejemplo: "http://localhost:8000/v1"
 TOKEN = None          # Ejemplo: "tu_token_si_usas_auth"
 
-@st.cache_data(show_spinner="🔄 Cargando datos...")
+@st.cache_data(show_spinner="🔄 Cargando datos desde API...")
 def load_data() -> pd.DataFrame:
-    """Carga datos desde API (si está activa) o CSV local por defecto."""
-
-    # --- 1) Intentar API ---
-    if BASE_API_URL:
-        try:
-            headers = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
-            res = requests.get(f"{BASE_API_URL}/reviews", headers=headers, timeout=10)
-            if res.status_code == 200:
-                st.success(" Datos cargados desde la API")
-                df = pd.DataFrame(res.json())
-            else:
-                st.warning(f" API respondió con {res.status_code}. Se usará CSV local.")
-                df = pd.read_csv(DATA_PATH, encoding="utf-8")
-        except Exception as e:
-            st.warning(f" Error conectando a la API: {e}. Se usará CSV local.")
-            df = pd.read_csv(DATA_PATH, encoding="utf-8")
-
-    # --- 2) CSV local (por defecto actual) ---
-    else:
-        try:
-            df = pd.read_csv(DATA_PATH, encoding="utf-8")
-           ## st.info(" Datos cargados desde el CSV local")
-        except UnicodeDecodeError:
-            df = pd.read_csv(DATA_PATH, encoding="latin-1")
-        except FileNotFoundError:
-            st.error(f" Archivo no encontrado: {DATA_PATH}")
-            st.stop()
-
-    # --- 3) Limpieza básica y manejo de nulos ---
-    expected = {
-        "Hotel_Name", "Reviewer_Nationality", "Positive_Review", "Negative_Review",
-        "review_text", "sentiment_label", "Reviewer_Score", "lat", "lng"
-    }
-    miss = expected - set(df.columns)
-    if miss:
-        st.error(f" Faltan columnas en el dataset: {sorted(miss)}")
+    """Carga datos desde API usando filtros básicos."""
+    
+    # Verificar que API esté disponible
+    if not check_api_available():
+        st.error("⚠️ La API no está disponible. Por favor, inicia el servidor API.")
+        st.info(f"API URL configurada: {API_URL}")
+        st.code("python api_app.py", language="bash")
         st.stop()
-
-    df["Reviewer_Score"] = pd.to_numeric(df["Reviewer_Score"], errors="coerce")
-    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
-    df["lng"] = pd.to_numeric(df["lng"], errors="coerce")
-
-    df["Hotel_Name"] = df["Hotel_Name"].fillna("Hotel Desconocido")
-    df["Reviewer_Nationality"] = df["Reviewer_Nationality"].fillna("Sin Especificar")
-    df["Positive_Review"] = df["Positive_Review"].fillna("")
-    df["Negative_Review"] = df["Negative_Review"].fillna("")
-    df["review_text"] = df["review_text"].fillna("")
-    df["sentiment_label"] = df["sentiment_label"].fillna("neutro")
-
-    if df["Reviewer_Score"].isna().any():
-        median_score = df["Reviewer_Score"].median()
-        df["Reviewer_Score"] = df["Reviewer_Score"].fillna(median_score)
-
-    df = df.rename(columns={
-        "Hotel_Name": "Nombre del Hotel",
-        "Reviewer_Nationality": "Nacionalidad del Revisor",
-        "Positive_Review": "Reseña Positiva",
-        "Negative_Review": "Reseña Negativa",
-        "review_text": "Texto de Reseña",
-        "sentiment_label": "Etiqueta de Sentimiento",
-        "Reviewer_Score": "Puntuación del Revisor"
-    })
-
-    return df
+    
+    try:
+        # Obtener TODOS los datos sin filtros (limit alto)
+        st.info(f"🔌 Conectado a API: {API_URL}")
+        
+        result = get_filtered_reviews_from_api(limit=None)  # Sin límite para obtener todo
+        
+        if result is None:
+            st.error("Error obteniendo datos de la API")
+            st.stop()
+        
+        reviews = result.get("reviews", [])
+        
+        if not reviews:
+            st.error("No se recibieron datos de la API")
+            st.stop()
+        
+        df = pd.DataFrame(reviews)
+        
+        st.success(f"✅ {len(df):,} reseñas cargadas desde la API")
+        
+        # Asegurar que las columnas estén en español (ya deberían venir así de la API)
+        if "Hotel_Name" in df.columns:
+            df = df.rename(columns={
+                "Hotel_Name": "Nombre del Hotel",
+                "Reviewer_Nationality": "Nacionalidad del Revisor",
+                "Positive_Review": "Reseña Positiva",
+                "Negative_Review": "Reseña Negativa",
+                "review_text": "Texto de Reseña",
+                "sentiment_label": "Etiqueta de Sentimiento",
+                "Reviewer_Score": "Puntuación del Revisor"
+            })
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"❌ Error cargando datos: {e}")
+        st.stop()
 
 # --- Llamar a la función de carga ---
 try:
@@ -849,9 +739,13 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # Obtener listas desde la API
+    hotels_list = get_hotels_from_api()
+    nationalities_list = get_nationalities_from_api(limit=50)
+    
     col_hotel = st.selectbox(
         "Hotel",
-        ["(Todos)"] + sorted(df["Nombre del Hotel"].dropna().unique().tolist())
+        ["(Todos)"] + hotels_list
     )
     
     if use_vader:
@@ -865,7 +759,7 @@ with st.sidebar:
     
     col_nat = st.selectbox(
         "Nacionalidad",
-        ["(Todas)"] + sorted(df["Nacionalidad del Revisor"].dropna().unique().tolist())[:50]
+        ["(Todas)"] + nationalities_list
     )
     
     score_lo, score_hi = st.slider(
@@ -875,58 +769,70 @@ with st.sidebar:
     
     st.markdown("---")
     
+    st.markdown("---")
+    
     fast_wc = st.toggle("Acelerar nubes de palabras", value=True,
                         help="Usa muestra de 3000 reseñas para generar nubes más rápido")
     
-    # Expander para procesamiento VADER
-    with st.expander("Procesamiento VADER", expanded=False):
-        st.write("Genera/actualiza `data/hotel_reviews_processed.csv` usando `main.py`.")
-
-        colA, colB = st.columns(2)
-        sample_n = colA.number_input("Muestra (0 = todo)", min_value=0, value=0, step=50000)
-        stream   = colB.toggle("Stream", value=True, help="Procesa por bloques")
-        chunk    = st.number_input("Chunk size", min_value=10_000, value=100_000, step=10_000)
-        topics   = st.toggle("Incluir LDA (tarda)", value=False)
-
-        if st.button("Ejecutar análisis ahora"):
-            with st.status("Procesando con VADER…", expanded=True) as status:
-                ok, log = run_analyze_cli(sample=sample_n, stream=stream, chunk=chunk, topics=topics)
-                st.code(log[-4000:], language="bash")
-                if ok and PROCESSED_PATH.exists():
-                    status.update(label=" Listo", state="complete")
-                    st.success("CSV procesado generado/actualizado.")
-                else:
-                    status.update(label=" Falló", state="error")
-                    st.error("Revisa el log para más detalles.")
-
-        def _safe_rerun():
-            try:
-                st.rerun()
-            except AttributeError:
-                st.experimental_rerun()
-
-        if st.button("Recargar datos procesados"):
-            st.cache_data.clear()
-            _safe_rerun()
-
-        if processed_is_stale():
-            st.warning("El archivo CSV procesado no existe o tiene más de 24 horas. Se recomienda ejecutar el análisis nuevamente.")
+    # Información de la API
+    st.markdown("---")
+    st.markdown("### 🔌 Estado de la API")
+    
+    if check_api_available():
+        st.success("✅ API Online")
+        st.caption(f"URL: {API_URL}")
+    else:
+        st.error("❌ API Offline")
+        st.caption(f"URL: {API_URL}")
+        st.code("python api_app.py", language="bash")
 
 # ======================
-# 6. Filtrado de Datos
+# 6. Aplicar Filtros (vía API)
 # ======================
-dff = df.copy()
 
-if col_hotel != "(Todos)":
-    dff = dff[dff["Nombre del Hotel"] == col_hotel]
+# Crear objeto de filtros para enviar a la API
+current_filters = {
+    "hotel": col_hotel if col_hotel != "(Todos)" else None,
+    "sentiment": col_sent if use_vader and col_sent != "(Todos)" else None,
+    "nationality": col_nat if col_nat != "(Todas)" else None,
+    "score_min": score_lo,
+    "score_max": score_hi,
+    "limit": None  # Sin límite para obtener todos los resultados filtrados
+}
 
-if col_nat != "(Todas)":
-    dff = dff[dff["Nacionalidad del Revisor"] == col_nat]
+# Obtener datos filtrados desde la API
+with st.spinner("🔄 Aplicando filtros..."):
+    filtered_result = get_filtered_reviews_from_api(
+        hotel=current_filters["hotel"],
+        sentiment=current_filters["sentiment"],
+        nationality=current_filters["nationality"],
+        score_min=current_filters["score_min"],
+        score_max=current_filters["score_max"],
+        limit=current_filters["limit"]
+    )
 
-if use_vader and col_sent != "(Todos)":
-    dff = dff[dff["Etiqueta de Sentimiento"] == col_sent]
+if filtered_result is None:
+    st.error("Error obteniendo datos filtrados de la API")
+    st.stop()
 
-dff = dff[(dff["Puntuación del Revisor"] >= score_lo) & (dff["Puntuación del Revisor"] <= score_hi)]
+# Convertir a DataFrame
+dff = pd.DataFrame(filtered_result.get("reviews", []))
+
+# Renombrar columnas si vienen del backend con nombres en inglés
+if "Hotel_Name" in dff.columns:
+    dff = dff.rename(columns={
+        "Hotel_Name": "Nombre del Hotel",
+        "Reviewer_Nationality": "Nacionalidad del Revisor",
+        "Positive_Review": "Reseña Positiva",
+        "Negative_Review": "Reseña Negativa",
+        "review_text": "Texto de Reseña",
+        "sentiment_label": "Etiqueta de Sentimiento",
+        "Reviewer_Score": "Puntuación del Revisor"
+    })
+
+if len(dff) == 0:
+    st.warning("⚠️ No hay reseñas que coincidan con los filtros aplicados")
+    st.stop()
 
 # ======================
 # 7. Header Principal
@@ -1119,7 +1025,7 @@ def fig_map(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
         m = m.sample(500, random_state=42)
     
     if vader_enabled:
-        fig = px.scatter_map(
+        fig = px.scatter_mapbox(
             m, lat="lat", lon="lng",
             color="Etiqueta de Sentimiento",
             color_discrete_map=PALETTE,
@@ -1129,7 +1035,7 @@ def fig_map(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
             height=450
         )
     else:
-        fig = px.scatter_map(
+        fig = px.scatter_mapbox(
             m, lat="lat", lon="lng",
             hover_name="Nombre del Hotel",
             hover_data={"Puntuación del Revisor": True, "lat": False, "lng": False},
@@ -1201,87 +1107,37 @@ def fig_nationality_distribution(data: pd.DataFrame) -> go.Figure:
     )
     return fig
 
-def sample_text(series: pd.Series, max_chars: int = 60000, fast: bool = True) -> str:
-    """Extrae texto de la serie con opción de muestreo rápido."""
-    if not fast:
-        return " ".join(series.dropna().astype(str).tolist())[:max_chars]
-    n = min(3000, series.dropna().shape[0])
-    if n == 0:
-        return ""
-    arr = series.dropna().astype(str).sample(n, random_state=42).tolist()
-    return " ".join(arr)[:max_chars]
 
-def get_extended_stopwords():
-    """
-    Obtiene una lista extendida de stop words combinando múltiples fuentes.
-    """
-    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+def wc_image_from_api(filters: dict, colormap: str, sample_size: int = 3000) -> BytesIO:
+    """Genera imagen de nube de palabras usando datos de la API."""
     
-    # Lista base de sklearn
-    stop_words = set(ENGLISH_STOP_WORDS)
+    # Obtener datos para word cloud desde la API
+    wc_data = get_wordcloud_data_from_api(filters, max_words=150, sample_size=sample_size)
     
-    # Intentar agregar stop words de NLTK
-    try:
-        import nltk
-        try:
-            nltk.data.find('corpora/stopwords')
-        except LookupError:
-            nltk.download('stopwords', quiet=True)
-        
-        from nltk.corpus import stopwords
-        nltk_stops = set(stopwords.words('english'))
-        stop_words.update(nltk_stops)
-    except:
-        pass  # Si falla, solo usar sklearn
+    if wc_data is None or not wc_data.get("words"):
+        # Si no hay datos, generar una imagen en blanco con mensaje
+        wc = WordCloud(
+            width=1600,
+            height=500,
+            background_color="white"
+        ).generate("sin datos disponibles")
+    else:
+        # Generar word cloud desde frecuencias
+        wc = WordCloud(
+            width=1600,
+            height=500,
+            background_color="white",
+            colormap=colormap,
+            relative_scaling=0.5,
+            min_font_size=10,
+            prefer_horizontal=0.7,
+            contour_width=1,
+            contour_color="#1E3A5F"
+        ).generate_from_frequencies(wc_data["words"])
     
-    # Agregar palabras adicionales comunes en reseñas de hoteles
-    custom_stops = {
-        'hotel', 'room', 'stay', 'stayed', 'night', 'nights',
-        'booking', 'booked', 'book', 'reservation', 'reserved',
-        'staff', 'service', 'location', 'place', 'time',
-        'good', 'great', 'nice', 'bad', 'terrible',
-        'like', 'really', 'just', 'got', 'went', 'come', 'came',
-        'would', 'could', 'should', 'also', 'well', 'even',
-        'however', 'although', 'though', 'still', 'yet',
-        'positive', 'negative', 'review', 'reviews',
-        'said', 'told', 'asked', 'did', 'does', 'done',
-        'thing', 'things', 'way', 'ways', 'day', 'days',
-        'bit', 'lot', 'lots', 'much', 'many', 'very', 'quite',
-        'nbsp', 'one', 'two', 'nothing', 'everything',
-        'the', 'and', 'was', 'were', 'that', 'this', 'for', 'with',
-        'not', 'but', 'are', 'had', 'have', 'has', 'been', 'there',
-        'all', 'from', 'they', 'which', 'when', 'where', 'who',
-        'our', 'we', 'you', 'can', 'will', 'would', 'could',
-        'no', 'yes', 'ok', 'okay', 'fine'
-    }
-    stop_words.update(custom_stops)
-    
-    return stop_words
-
-
-def wc_image(text: str, colormap: str) -> BytesIO:
-    """Genera imagen de nube de palabras con stop words extendidas."""
-    if not text.strip():
-        text = "sin datos"
-    
-    # Obtener stop words extendidas
-    stopwords_extended = get_extended_stopwords()
-    
-    wc = WordCloud(
-        width=1600,
-        height=500,
-        background_color="white",
-        colormap=colormap,
-        max_words=150,
-        relative_scaling=0.5,
-        stopwords=stopwords_extended,
-        min_font_size=10,
-        max_font_size=100,
-        prefer_horizontal=0.7
-    )
-    img = wc.generate(text).to_image()
+    # Convertir a imagen
     buf = BytesIO()
-    img.save(buf, format="PNG")
+    wc.to_image().save(buf, format="PNG")
     buf.seek(0)
     return buf
 
@@ -1351,31 +1207,41 @@ if use_vader:
 
         col_pos, col_neg = st.columns(2)
 
-        pos_text = sample_text(
-            dff.loc[dff["Etiqueta de Sentimiento"].eq("positivo"), "Reseña Positiva"],
-            fast=fast_wc
-        )
-        neg_text = sample_text(
-            dff.loc[dff["Etiqueta de Sentimiento"].eq("negativo"), "Reseña Negativa"],
-            fast=fast_wc
-        )
+        # Preparar filtros para word clouds
+        sample_size_wc = 3000 if fast_wc else len(dff)
+        
+        # Filtro para positivas
+        filters_pos = {
+            **current_filters,
+            "sentiment": "positivo"
+        }
+        
+        # Filtro para negativas
+        filters_neg = {
+            **current_filters,
+            "sentiment": "negativo"
+        }
 
         with col_pos:
             st.markdown('<div class="wordcloud-container">', unsafe_allow_html=True)
             st.markdown('<span class="wordcloud-label">✓ RESEÑAS POSITIVAS</span>', unsafe_allow_html=True)
-            if pos_text.strip():
-                st.image(wc_image(pos_text, "RdPu"), use_container_width=True)  # <- actualizado
-            else:
-                st.warning("No hay suficientes reseñas positivas para generar la nube de palabras.")
+            with st.spinner("Generando nube de palabras positivas..."):
+                wc_img = wc_image_from_api(filters_pos, "RdPu", sample_size=sample_size_wc)
+                if wc_img:
+                    st.image(wc_img, use_container_width=True)
+                else:
+                    st.warning("No hay suficientes reseñas positivas para generar la nube de palabras.")
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col_neg:
             st.markdown('<div class="wordcloud-container">', unsafe_allow_html=True)
             st.markdown('<span class="wordcloud-label">✗ RESEÑAS NEGATIVAS</span>', unsafe_allow_html=True)
-            if neg_text.strip():
-                st.image(wc_image(neg_text, "Blues"), use_container_width=True)  # <- actualizado
-            else:
-                st.warning("No hay suficientes reseñas negativas para generar la nube de palabras.")
+            with st.spinner("Generando nube de palabras negativas..."):
+                wc_img = wc_image_from_api(filters_neg, "Blues", sample_size=sample_size_wc)
+                if wc_img:
+                    st.image(wc_img, use_container_width=True)
+                else:
+                    st.warning("No hay suficientes reseñas negativas para generar la nube de palabras.")
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
@@ -1586,140 +1452,163 @@ with tab_stats:
 # TAB 6: Análisis con API
 tab_api = tab6 if use_vader else tab5
 with tab_api:
-    st.markdown("### Analisis de Reseñas con API REST")
-    st.markdown("Esta sección usa la API de FastAPI para análisis en tiempo real.")
-
+    st.markdown("### 🔌 Análisis de Reseñas con API REST")
+    st.markdown("Esta sección utiliza la API REST de FastAPI para análisis en tiempo real")
+    
     # Verificar estado de la API
     api_available = check_api_available()
-
-    # Fila de estado y botón
+    
     col_status1, col_status2 = st.columns([3, 1])
     with col_status1:
         if api_available:
-            st.markdown('<div class="api-status-online">API CONECTADA</div>', unsafe_allow_html=True)
+            st.markdown('<div class="api-status-online">✅ API CONECTADA</div>', unsafe_allow_html=True)
             st.caption(f"Endpoint: {API_URL}")
         else:
-            st.markdown('<div class="api-status-offline">API NO DISPONIBLE</div>', unsafe_allow_html=True)
-            st.caption("Inicia la API con: python api_app.py")
-
+            st.markdown('<div class="api-status-offline">❌ API NO DISPONIBLE</div>', unsafe_allow_html=True)
+            st.caption(f"Intenta iniciar la API: `python api_app.py`")
+    
     with col_status2:
-        if st.button("Verificar API", key="ping_api_btn", width="stretch"):
+        if st.button("🔄 Verificar API", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
-
+    
     if not api_available:
-        st.error(
-            "La API no está disponible. Pasos:\n\n"
-            "1) Abre una terminal en la raíz del proyecto\n"
-            "2) Ejecuta: python api_app.py\n"
-            "3) Espera a que inicie en http://localhost:8000\n"
-            "4) Recarga esta página\n\n"
-            "La API permite análisis de reseñas individuales y resúmenes de tópicos."
-        )
-
-        st.info(
-            "Documentación de la API:\n"
-            "- Swagger UI: http://localhost:8000/docs\n"
-            "- README: API_README.md\n"
-            "- Guía rápida: QUICKSTART_API.md"
-        )
+        st.error("""
+        **La API no está disponible.** Para usar esta funcionalidad:
+        
+        1. Abre una terminal en la raíz del proyecto
+        2. Ejecuta: `python api_app.py`
+        3. Espera a que inicie en http://localhost:8000
+        4. Recarga esta página
+        
+        La API permite análisis de reseñas individuales y resúmenes de tópicos agregados.
+        """)
+        
+        st.info("""
+        **📖 Documentación de la API:**
+        - Swagger UI: http://localhost:8000/docs
+        - README: API_README.md
+        - Guía rápida: QUICKSTART_API.md
+        """)
+        
         st.stop()
-
+    
     # Dos secciones: Análisis Individual y Resumen de Tópicos
     st.markdown("---")
-    subtab1, subtab2 = st.tabs(["Analisis Individual", "Resumen de Topicos"])
-
+    
+    subtab1, subtab2 = st.tabs(["🔍 Análisis Individual", "📊 Resumen de Tópicos"])
+    
     # SUBTAB 1: Análisis de reseña individual
     with subtab1:
         st.markdown("#### Analiza una reseña del dataset")
-        st.markdown("Selecciona una reseña existente para analizar su sentimiento y los tópicos detectados.")
-
+        st.markdown("Selecciona una reseña existente del dataset para analizar su sentimiento y tópicos detectados.")
+        
         # Filtros para seleccionar reseña
         col_filter1, col_filter2 = st.columns(2)
-
+        
         with col_filter1:
+            # Filtro por hotel
             hotel_options = ["(Todos)"] + sorted(dff["Nombre del Hotel"].dropna().unique().tolist())
             selected_hotel = st.selectbox(
-                "Filtrar por Hotel:",
+                "🏨 Filtrar por Hotel:",
                 hotel_options,
                 help="Selecciona un hotel para ver sus reseñas"
             )
-
+        
         with col_filter2:
+            # Filtro por sentimiento (si está disponible)
             if use_vader and "Etiqueta de Sentimiento" in dff.columns:
-                sentiment_options = ["(Todos)", "positivo", "negativo", "neutro"]
+                sentiment_options = ["(Todos)"] + ["positivo", "negativo", "neutro"]
                 selected_sentiment = st.selectbox(
-                    "Filtrar por Sentimiento:",
+                    "😊 Filtrar por Sentimiento:",
                     sentiment_options,
-                    help="Filtra reseñas por sentimiento"
+                    help="Filtra reseñas por su sentimiento"
                 )
             else:
                 selected_sentiment = "(Todos)"
-
+        
         # Aplicar filtros
         dff_filtered = dff.copy()
+        
         if selected_hotel != "(Todos)":
             dff_filtered = dff_filtered[dff_filtered["Nombre del Hotel"] == selected_hotel]
+        
         if selected_sentiment != "(Todos)" and use_vader:
             dff_filtered = dff_filtered[dff_filtered["Etiqueta de Sentimiento"] == selected_sentiment]
-
-        st.info(f"Reseñas disponibles con estos filtros: {len(dff_filtered):,}")
-
+        
+        # Mostrar cantidad de reseñas disponibles
+        st.info(f"📊 Reseñas disponibles con estos filtros: **{len(dff_filtered):,}**")
+        
         if len(dff_filtered) == 0:
-            st.warning("No hay reseñas para esos filtros. Ajusta los criterios.")
+            st.warning("⚠️ No hay reseñas con estos filtros. Ajusta los criterios de búsqueda.")
         else:
-            # Lista para el selector
-            review_options, review_indices = [], []
-            for idx, row in dff_filtered.head(100).iterrows():  # limitar a 100 por rendimiento
+            # Crear lista de opciones para el selectbox
+            # Formato: "Hotel - Puntuación - Preview de reseña"
+            review_options = []
+            review_indices = []
+            
+            for idx, row in dff_filtered.head(100).iterrows():  # Limitar a 100 para performance
                 hotel_name = row["Nombre del Hotel"][:30]
                 score = row["Puntuación del Revisor"]
+                
+                # Obtener preview de la reseña
                 if "review_text" in row and pd.notna(row["review_text"]) and row["review_text"].strip():
                     preview = row["review_text"][:80].replace("\n", " ")
                 else:
                     pos_rev = row.get("Reseña Positiva", "")
                     neg_rev = row.get("Reseña Negativa", "")
-                    preview = f"{pos_rev} {neg_rev}".strip()[:80].replace("\n", " ")
+                    combined = f"{pos_rev} {neg_rev}".strip()
+                    preview = combined[:80].replace("\n", " ")
+                
                 if preview.strip():
-                    option_text = f"{hotel_name}... | {score} | {preview}..."
+                    option_text = f"{hotel_name}... | ⭐{score} | {preview}..."
                     review_options.append(option_text)
                     review_indices.append(idx)
-
+            
             if len(review_options) == 0:
-                st.warning("No se encontraron reseñas con texto válido en la muestra.")
+                st.warning("⚠️ No se encontraron reseñas con texto válido. Ajusta los filtros.")
             else:
+                # Selector de reseña
                 st.markdown("---")
-                st.markdown("##### Selecciona una Reseña")
+                st.markdown("##### 📝 Selecciona una Reseña")
+                
                 selected_review_idx = st.selectbox(
                     "Reseña:",
                     range(len(review_options)),
                     format_func=lambda x: review_options[x],
                     help="Selecciona una reseña para analizar"
                 )
-
+                
+                # Obtener la reseña seleccionada
                 actual_idx = review_indices[selected_review_idx]
                 selected_row = dff_filtered.loc[actual_idx]
-
-                # Detalles
-                with st.expander("Detalles de la Reseña Seleccionada", expanded=True):
+                
+                # Mostrar detalles de la reseña seleccionada
+                with st.expander("📋 Detalles de la Reseña Seleccionada", expanded=True):
                     col_det1, col_det2, col_det3 = st.columns(3)
+                    
                     with col_det1:
-                        st.metric("Hotel", selected_row["Nombre del Hotel"][:30] + "...")
+                        st.metric("🏨 Hotel", selected_row["Nombre del Hotel"][:30] + "...")
+                    
                     with col_det2:
-                        st.metric("Puntuación", f"{selected_row['Puntuación del Revisor']}/10")
+                        st.metric("⭐ Puntuación", f"{selected_row['Puntuación del Revisor']}/10")
+                    
                     with col_det3:
                         if "Etiqueta de Sentimiento" in selected_row:
-                            st.metric("Sentimiento (dataset)", selected_row["Etiqueta de Sentimiento"].capitalize())
+                            st.metric("� Sentimiento", selected_row["Etiqueta de Sentimiento"].capitalize())
                         else:
-                            st.metric("Sentimiento (dataset)", "N/A")
-
+                            st.metric("😊 Sentimiento", "N/A")
+                    
+                    # Mostrar texto completo de la reseña
                     st.markdown("**Texto de la Reseña:**")
+                    
                     if "review_text" in selected_row and pd.notna(selected_row["review_text"]) and selected_row["review_text"].strip():
                         review_text = selected_row["review_text"]
                     else:
                         pos_text = selected_row.get("Reseña Positiva", "").strip()
                         neg_text = selected_row.get("Reseña Negativa", "").strip()
                         review_text = f"{pos_text}. {neg_text}".strip(". ")
-
+                    
                     st.text_area(
                         "Reseña completa:",
                         value=review_text,
@@ -1727,179 +1616,171 @@ with tab_api:
                         disabled=True,
                         label_visibility="collapsed"
                     )
-
-# Botón de análisis
-st.markdown("---")
-col_btn1, _ = st.columns([1, 3])
-with col_btn1:
-    analyze_btn = st.button("Analizar con API", key="analyze_api_btn")
-
-if analyze_btn:
-    if len(review_text.strip()) < 10:
-        st.warning("La reseña seleccionada es demasiado corta para analizar.")
-    else:
-        with st.spinner("Analizando reseña con la API..."):
-            result = analyze_review_with_api(review_text)
-
-        if result:
-            st.success("Análisis completado.")
-
-            # Comparación con dataset si existe
-            if "Etiqueta de Sentimiento" in selected_row and pd.notna(selected_row["Etiqueta de Sentimiento"]):
+                
+                # Botón de análisis
                 st.markdown("---")
-                st.markdown("#### Comparación: Dataset vs API")
-
-                col_comp1, col_comp2 = st.columns(2)
-                with col_comp1:
-                    st.markdown("**Sentimiento en dataset (VADER original):**")
-                    original_sentiment = selected_row["Etiqueta de Sentimiento"]
-                    sentiment_class_orig = f"sentiment-{original_sentiment.lower()}"
-                    st.markdown(
-                        f'<div class="sentiment-badge {sentiment_class_orig}">{original_sentiment.upper()}</div>',
-                        unsafe_allow_html=True
-                    )
-                    if "compound" in selected_row:
-                        # Mostrar también en % normalizado para coherencia visual
-                        ds_compound = selected_row["compound"]
-                        ds_compound_pct = (ds_compound + 1) / 2 * 100
-                        st.metric("Score compuesto (dataset)", f"{ds_compound_pct:.1f} %")
-
-                with col_comp2:
-                    st.markdown("**Sentimiento calculado por la API:**")
-                    api_sentiment = result['sentiment']['sentiment']
-                    sentiment_class_api = f"sentiment-{api_sentiment.lower()}"
-                    st.markdown(
-                        f'<div class="sentiment-badge {sentiment_class_api}">{api_sentiment.upper()}</div>',
-                        unsafe_allow_html=True
-                    )
-                    api_compound_pct = (result['sentiment']['compound_score'] + 1) / 2 * 100
-                    st.metric("Score compuesto (API)", f"{api_compound_pct:.1f} %")
-
-                if original_sentiment == api_sentiment:
-                    st.success("Los sentimientos coinciden.")
-                else:
-                    st.info("Los sentimientos difieren; puede deberse a diferencias de limpieza o tokenización.")
-
-        # Texto limpio
-        with st.expander("Texto procesado por la API", expanded=False):
-            st.code(result['cleaned_text'], language=None)
-
-        st.markdown("---")
+                col_btn1, col_btn2 = st.columns([1, 3])
+                
+                with col_btn1:
+                    analyze_btn = st.button("🚀 Analizar con API", type="primary", use_container_width=True)
         
-        st.markdown("#### Análisis de Sentimiento Detallado (API)")
-
-        sentiment = result['sentiment']
-
-          # porcentajes de cada componente
-        pos_pct = sentiment["positive_score"] * 100
-        neu_pct = sentiment["neutral_score"] * 100
-        neg_pct = sentiment["negative_score"] * 100
-
-          # identifica el dominante para resaltarlo
-        dom_val = max(pos_pct, neu_pct, neg_pct)
-        is_dom = lambda v: " active" if abs(v - dom_val) < 1e-9 else ""
-
-          # header con 3 badges (siempre visibles)
-        header_html = f"""
-<div class="sent-row">
-  <div class="sent-badge pos{is_dom(pos_pct)}">POSITIVO {pos_pct:.1f}%</div>
-  <div class="sent-badge neu{is_dom(neu_pct)}">NEUTRAL {neu_pct:.1f}%</div>
-  <div class="sent-badge neg{is_dom(neg_pct)}">NEGATIVO {neg_pct:.1f}%</div>
-</div>
-<style>
-  .sent-row{{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0 14px}}
-  .sent-badge{{padding:6px 12px;border-radius:999px;font-weight:600;font-size:.95rem;border:1px solid transparent}}
-  .sent-badge.pos{{background:#064e3b;color:#a7f3d0;border-color:#10b981}}
-  .sent-badge.neu{{background:#374151;color:#e5e7eb;border-color:#6b7280}}
-  .sent-badge.neg{{background:#7f1d1d;color:#fecaca;border-color:#ef4444}}
-  .sent-badge.active{{box-shadow:0 0 0 2px rgba(255,255,255,.35) inset}}
-</style>
-"""
-        st.markdown(header_html, unsafe_allow_html=True)
-
-
-        # Métricas de sentimiento (normalizadas a porcentaje)
-        compound_percent = (sentiment['compound_score'] + 1) / 2 * 100  # -1..1 -> 0..100
-        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-
-        with col_s1:
-            st.metric(
-                "Score compuesto",
-                f"{compound_percent:.1f} %",
-                help="Score general normalizado a escala 0–100 % (50 % = neutro)"
-            )
-        with col_s2:
-            st.metric("Positivo", f"{sentiment['positive_score'] * 100:.1f} %", help="Proporción de palabras positivas")
-        with col_s3:
-            st.metric("Neutral", f"{sentiment['neutral_score'] * 100:.1f} %", help="Proporción de palabras neutrales")
-        with col_s4:
-            st.metric("Negativo", f"{sentiment['negative_score'] * 100:.1f} %", help="Proporción de palabras negativas")
-
-        # Gráfico de barras: eje Y en proporción (0–1), etiquetas en %
-        fig_sentiment = go.Figure(
-            data=[
-                go.Bar(
-                    x=["Positivo", "Neutral", "Negativo"],
-                    y=[
-                        sentiment["positive_score"],
-                        sentiment["neutral_score"],
-                        sentiment["negative_score"]
-                    ],
-                    marker=dict(color=["#10b981", "#6b7280", "#ef4444"]),
-                    text=[
-                        f"{sentiment['positive_score'] * 100:.1f} %",
-                        f"{sentiment['neutral_score'] * 100:.1f} %",
-                        f"{sentiment['negative_score'] * 100:.1f} %"
-                    ],
-                    textposition="outside",
-                    textfont=dict(size=14)
-                )
-            ]
-        )
-
-        fig_sentiment.update_layout(
-            title=dict(text="Distribución de Sentimientos", x=0.5, xanchor="center"),
-            yaxis=dict(title="Proporción", tickformat=".0%", range=[0, 1]),
-            xaxis=dict(title="Tipo de Sentimiento"),
-            height=400,
-            plot_bgcolor="#0f172a",
-            paper_bgcolor="#0f172a",
-            font=dict(color="white"),
-            margin=dict(l=30, r=30, t=60, b=30)
-        )
-
-        st.plotly_chart(fig_sentiment, width="stretch")
-
-        st.markdown("---")
-        st.markdown("#### Tópicos Detectados (LDA)")
-        if result["topics"]:
-            st.markdown(f"Se detectaron {len(result['topics'])} tópicos en esta reseña:")
-            for topic in result["topics"]:
-                with st.expander(f"Tema {topic['topic_id']}", expanded=True):
-                    keywords = topic["keywords"].split(", ")
-                    badges_html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">'
-                    for word in keywords:
-                        badges_html += f'<span class="topic-badge">{word}</span>'
-                    badges_html += "</div>"
-                    st.markdown(badges_html, unsafe_allow_html=True)
-        else:
-            st.info("No se detectaron tópicos específicos en esta reseña.")
-
-        st.markdown("---")
-        result_json = json.dumps(result, indent=2, ensure_ascii=False)
-        st.download_button(
-            label="Descargar resultado (JSON)",
-            data=result_json.encode('utf-8'),
-            file_name=f"analisis_resena_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
-            mime="application/json",
-            use_container_width=True
-        )
-
+                if analyze_btn:
+                    if len(review_text.strip()) < 10:
+                        st.warning("⚠️ La reseña seleccionada es demasiado corta para analizar")
+                    else:
+                        with st.spinner("🔄 Analizando reseña con la API... Esto puede tardar unos segundos"):
+                            result = analyze_review_with_api(review_text)
+                        
+                        if result:
+                            st.success("✅ Análisis completado")
+                            
+                            # Mostrar comparación con datos originales si están disponibles
+                            if "Etiqueta de Sentimiento" in selected_row and pd.notna(selected_row["Etiqueta de Sentimiento"]):
+                                st.markdown("---")
+                                st.markdown("#### 🔄 Comparación: Dataset vs API")
+                                
+                                col_comp1, col_comp2 = st.columns(2)
+                                
+                                with col_comp1:
+                                    st.markdown("**Sentimiento en Dataset (VADER original):**")
+                                    original_sentiment = selected_row["Etiqueta de Sentimiento"]
+                                    sentiment_class_orig = f"sentiment-{original_sentiment.lower()}"
+                                    st.markdown(
+                                        f'<div class="sentiment-badge {sentiment_class_orig}">{original_sentiment.upper()}</div>',
+                                        unsafe_allow_html=True
+                                    )
+                                    
+                                    if "compound" in selected_row:
+                                        st.metric("Score Compuesto", f"{selected_row['compound']:.3f}")
+                                
+                                with col_comp2:
+                                    st.markdown("**Sentimiento calculado por API:**")
+                                    api_sentiment = result['sentiment']['sentiment']
+                                    sentiment_class_api = f"sentiment-{api_sentiment.lower()}"
+                                    st.markdown(
+                                        f'<div class="sentiment-badge {sentiment_class_api}">{api_sentiment.upper()}</div>',
+                                        unsafe_allow_html=True
+                                    )
+                                    st.metric("Score Compuesto", f"{result['sentiment']['compound_score']:.3f}")
+                                
+                                # Verificar si coinciden
+                                if original_sentiment == api_sentiment:
+                                    st.success("✅ Los sentimientos coinciden!")
+                                else:
+                                    st.info("ℹ️ Los sentimientos difieren. Esto puede deberse a diferencias en el procesamiento del texto.")
+                            
+                            # Mostrar texto limpio
+                            with st.expander("📝 Texto procesado por la API", expanded=False):
+                                st.code(result['cleaned_text'], language=None)
+                            
+                            st.markdown("---")
+                            
+                            # Sentimiento detallado de la API
+                            st.markdown("#### 📊 Análisis de Sentimiento Detallado (API)")
+                            
+                            sentiment = result['sentiment']
+                            sentiment_label = sentiment['sentiment']
+                            
+                            # Badge de sentimiento
+                            sentiment_class = f"sentiment-{sentiment_label.lower()}"
+                            st.markdown(
+                                f'<div class="sentiment-badge {sentiment_class}">{sentiment_label.upper()}</div>',
+                                unsafe_allow_html=True
+                            )
+                            
+                            # Métricas de sentimiento
+                            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+                            
+                            with col_s1:
+                                st.metric(
+                                    "Score Compuesto",
+                                    f"{sentiment['compound_score']:.3f}",
+                                    help="Score general de sentimiento (-1 a 1)"
+                                )
+                            
+                            with col_s2:
+                                st.metric(
+                                    "😊 Positivo",
+                                    f"{sentiment['positive_score']:.3f}",
+                                    help="Proporción de palabras positivas"
+                                )
+                            
+                            with col_s3:
+                                st.metric(
+                                    "😐 Neutral",
+                                    f"{sentiment['neutral_score']:.3f}",
+                                    help="Proporción de palabras neutrales"
+                                )
+                            
+                            with col_s4:
+                                st.metric(
+                                    "😞 Negativo",
+                                    f"{sentiment['negative_score']:.3f}",
+                                    help="Proporción de palabras negativas"
+                                )
+                            
+                            # Gráfico de barras
+                            fig_sentiment = go.Figure(data=[
+                                go.Bar(
+                                    x=['Positivo', 'Neutral', 'Negativo'],
+                                    y=[sentiment['positive_score'], sentiment['neutral_score'], sentiment['negative_score']],
+                                    marker_color=['#10b981', '#6b7280', '#ef4444'],
+                                    text=[f"{sentiment['positive_score']:.2%}", 
+                                          f"{sentiment['neutral_score']:.2%}", 
+                                          f"{sentiment['negative_score']:.2%}"],
+                                    textposition='outside'
+                                )
+                            ])
+                            
+                            fig_sentiment.update_layout(
+                                title="Distribución de Sentimientos",
+                                yaxis_title="Proporción",
+                                height=350,
+                                showlegend=False,
+                                template="plotly_white"
+                            )
+                            
+                            st.plotly_chart(fig_sentiment, use_container_width=True)
+                            
+                            st.markdown("---")
+                            
+                            # Tópicos
+                            st.markdown("#### 🎯 Tópicos Detectados (LDA)")
+                            
+                            if result['topics']:
+                                st.markdown(f"Se detectaron **{len(result['topics'])}** tópicos en esta reseña:")
+                                
+                                for topic in result['topics']:
+                                    with st.expander(f"🏷️ Tema {topic['topic_id']}", expanded=True):
+                                        keywords = topic['keywords'].split(", ")
+                                        
+                                        # Crear badges HTML para palabras clave
+                                        badges_html = '<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;">'
+                                        for word in keywords:
+                                            badges_html += f'<span class="topic-badge">{word}</span>'
+                                        badges_html += '</div>'
+                                        
+                                        st.markdown(badges_html, unsafe_allow_html=True)
+                            else:
+                                st.info("No se detectaron tópicos específicos en esta reseña.")
+                            
+                            # Botón para descargar resultado
+                            st.markdown("---")
+                            result_json = json.dumps(result, indent=2, ensure_ascii=False)
+                            st.download_button(
+                                label="💾 Descargar resultado (JSON)",
+                                data=result_json,
+                                file_name=f"analisis_resena_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
+                                mime="application/json",
+                                use_container_width=True
+                            )
+    
     # SUBTAB 2: Resumen de tópicos agregados
     with subtab2:
         st.markdown("#### Resumen de Tópicos Más Mencionados")
-        st.markdown("Genera un resumen de los tópicos más frecuentes en reseñas positivas y negativas.")
-
+        st.markdown("Obtén un resumen de los tópicos más frecuentes en reseñas positivas y negativas del dataset.")
+        
+        # Configuración
         col_cfg1, col_cfg2 = st.columns(2)
         with col_cfg1:
             n_topics = st.slider(
@@ -1907,117 +1788,168 @@ if analyze_btn:
                 min_value=3,
                 max_value=15,
                 value=8,
-                help="Más tópicos = más detalle (más tiempo)."
+                help="Más tópicos = más detalle pero más tiempo de procesamiento"
             )
+        
         with col_cfg2:
             max_reviews = st.select_slider(
                 "Máximo de reseñas a analizar:",
                 options=[1000, 2000, 5000, 10000, 20000, 50000],
                 value=10000,
-                help="Menos reseñas = más rápido."
+                help="Menos reseñas = más rápido pero menos representativo"
             )
-
-        col_btn_sum1, _ = st.columns([1, 3])
+        
+        col_btn_sum1, col_btn_sum2 = st.columns([1, 3])
         with col_btn_sum1:
-            generate_summary = st.button("Generar Resumen", key="gen_summary_btn", width="stretch")
-
+            generate_summary = st.button("📈 Generar Resumen", type="primary", use_container_width=True)
+        
         if generate_summary:
-            with st.spinner(f"Analizando hasta {max_reviews:,} reseñas..."):
-                topics_data = get_topics_from_api(n_topics=n_topics, max_reviews=max_reviews)
-
+            # Preparar filtros para la API
+            topics_filters = current_filters.copy()
+            topics_filters["sample_size"] = max_reviews
+            
+            with st.spinner(f"🔄 Analizando hasta {max_reviews:,} reseñas... Esto puede tardar 30-90 segundos"):
+                topics_data = get_topics_from_api(topics_filters, n_topics=n_topics)
+            
             if topics_data:
-                st.success("Resumen generado correctamente.")
-
+                st.success("✅ Resumen generado exitosamente")
+                
+                # Información general
                 st.markdown("---")
-                st.markdown("#### Información General")
+                st.markdown("#### 📊 Información General")
+                
                 col_info1, col_info2, col_info3, col_info4 = st.columns(4)
+                
                 with col_info1:
                     st.metric(
-                        "Fuente",
+                        "📚 Fuente",
                         topics_data['data_source'].replace('hotel_reviews_processed.csv', 'Procesado').replace('Hotel_Reviews.csv', 'Raw')
                     )
+                
                 with col_info2:
-                    st.metric("Total analizado", f"{topics_data['total_reviews_analyzed']:,}")
+                    st.metric(
+                        "📊 Total Analizado",
+                        f"{topics_data['total_reviews_analyzed']:,}"
+                    )
+                
                 with col_info3:
                     pos_count = topics_data['positive_topics']['total_reviews']
-                    st.metric("Positivas", f"{pos_count:,}",
-                              delta=f"{pos_count/topics_data['total_reviews_analyzed']*100:.1f}%")
+                    st.metric(
+                        "😊 Positivas",
+                        f"{pos_count:,}",
+                        delta=f"{pos_count/topics_data['total_reviews_analyzed']*100:.1f}%"
+                    )
+                
                 with col_info4:
                     neg_count = topics_data['negative_topics']['total_reviews']
-                    st.metric("Negativas", f"{neg_count:,}",
-                              delta=f"{neg_count/topics_data['total_reviews_analyzed']*100:.1f}%")
-
+                    st.metric(
+                        "😞 Negativas",
+                        f"{neg_count:,}",
+                        delta=f"{neg_count/topics_data['total_reviews_analyzed']*100:.1f}%"
+                    )
+                
                 st.markdown("---")
+                
+                # Tópicos en dos columnas
                 col_pos, col_neg = st.columns(2)
-
+                
                 with col_pos:
-                    st.markdown("### Tópicos en Reseñas Positivas")
-                    st.markdown(f"{topics_data['positive_topics']['total_reviews']:,} reseñas analizadas")
+                    st.markdown("### 😊 TÓPICOS EN RESEÑAS POSITIVAS")
+                    st.markdown(f"*{topics_data['positive_topics']['total_reviews']:,} reseñas analizadas*")
+                    
                     for topic in topics_data['positive_topics']['topics']:
-                        st.markdown(
-                            '<div class="api-card" style="border-left-color:#10b981;">'
-                            '<h4 style="color:#10b981;margin-bottom:10px;">Tema {}</h4>'
-                            '<p style="color:#64748b;font-size:0.9rem;margin-bottom:8px;">Palabras clave:</p>'
-                            '</div>'.format(topic['topic_id']),
-                            unsafe_allow_html=True
-                        )
-                        keywords = topic['keywords'].split(", ")
-                        badges_html = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:-10px;margin-bottom:15px;">'
-                        for word in keywords[:10]:
-                            badges_html += f'<span class="topic-badge" style="background:linear-gradient(135deg,#10b981 0%,#059669 100%);">{word}</span>'
-                        badges_html += '</div>'
-                        st.markdown(badges_html, unsafe_allow_html=True)
-
+                        with st.container():
+                            st.markdown(f"""
+                            <div class="api-card" style="border-left-color: #10b981;">
+                                <h4 style="color: #10b981; margin-bottom: 10px;">🏷️ Tema {topic['topic_id']}</h4>
+                                <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 8px;">Palabras clave:</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            keywords = topic['keywords'].split(", ")
+                            badges_html = '<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: -10px; margin-bottom: 15px;">'
+                            for word in keywords[:10]:  # Mostrar máximo 10 palabras
+                                badges_html += f'<span class="topic-badge" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">{word}</span>'
+                            badges_html += '</div>'
+                            st.markdown(badges_html, unsafe_allow_html=True)
+                
                 with col_neg:
-                    st.markdown("### Tópicos en Reseñas Negativas")
-                    st.markdown(f"{topics_data['negative_topics']['total_reviews']:,} reseñas analizadas")
+                    st.markdown("### 😞 TÓPICOS EN RESEÑAS NEGATIVAS")
+                    st.markdown(f"*{topics_data['negative_topics']['total_reviews']:,} reseñas analizadas*")
+                    
                     for topic in topics_data['negative_topics']['topics']:
-                        st.markdown(
-                            '<div class="api-card" style="border-left-color:#ef4444;">'
-                            '<h4 style="color:#ef4444;margin-bottom:10px;">Tema {}</h4>'
-                            '<p style="color:#64748b;font-size:0.9rem;margin-bottom:8px;">Palabras clave:</p>'
-                            '</div>'.format(topic['topic_id']),
-                            unsafe_allow_html=True
-                        )
-                        keywords = topic['keywords'].split(", ")
-                        badges_html = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:-10px;margin-bottom:15px;">'
-                        for word in keywords[:10]:
-                            badges_html += f'<span class="topic-badge" style="background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);">{word}</span>'
-                        badges_html += '</div>'
-                        st.markdown(badges_html, unsafe_allow_html=True)
-
+                        with st.container():
+                            st.markdown(f"""
+                            <div class="api-card" style="border-left-color: #ef4444;">
+                                <h4 style="color: #ef4444; margin-bottom: 10px;">🏷️ Tema {topic['topic_id']}</h4>
+                                <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 8px;">Palabras clave:</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            keywords = topic['keywords'].split(", ")
+                            badges_html = '<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: -10px; margin-bottom: 15px;">'
+                            for word in keywords[:10]:
+                                badges_html += f'<span class="topic-badge" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">{word}</span>'
+                            badges_html += '</div>'
+                            st.markdown(badges_html, unsafe_allow_html=True)
+                
+                # Comparación visual
                 st.markdown("---")
-                st.markdown("#### Comparación de Tópicos")
+                st.markdown("#### 📊 Comparación de Tópicos")
+                
+                # Crear tabla comparativa
                 comparison_data = []
-                for i, (pos_topic, neg_topic) in enumerate(
-                    zip(topics_data['positive_topics']['topics'], topics_data['negative_topics']['topics']), 1
-                ):
+                
+                for i, (pos_topic, neg_topic) in enumerate(zip(
+                    topics_data['positive_topics']['topics'],
+                    topics_data['negative_topics']['topics']
+                ), 1):
                     comparison_data.append({
                         'Tema #': i,
-                        'Positivo': pos_topic['keywords'][:60] + "...",
-                        'Negativo': neg_topic['keywords'][:60] + "..."
+                        '😊 Positivo': pos_topic['keywords'][:60] + "...",
+                        '😞 Negativo': neg_topic['keywords'][:60] + "..."
                     })
+                
                 df_comparison = pd.DataFrame(comparison_data)
-                st.dataframe(df_comparison, width="stretch", hide_index=True)
-
+                st.dataframe(df_comparison, use_container_width=True, hide_index=True)
+                
+                # Botón para descargar
                 st.markdown("---")
                 topics_json = json.dumps(topics_data, indent=2, ensure_ascii=False)
                 st.download_button(
-                    label="Descargar resumen (JSON)",
+                    label="💾 Descargar resumen completo (JSON)",
                     data=topics_json,
                     file_name=f"resumen_topicos_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
                     mime="application/json",
-                    width="stretch"
+                    use_container_width=True
                 )
         else:
-            st.info("Configura los parámetros y pulsa Generar Resumen para obtener el análisis de tópicos.")
+            st.info("👆 Configura los parámetros y haz clic en 'Generar Resumen' para obtener el análisis de tópicos.")
+            
+            # Mostrar información de la API
             st.markdown("---")
-            st.markdown("#### Sobre esta funcionalidad")
-            st.markdown(
-                "Esta sección usa la API de FastAPI para: "
-                "cargar el dataset procesado, filtrar reseñas por sentimiento, extraer tópicos con LDA "
-                "y devolver resultados en JSON. Ventajas: procesamiento centralizado, reutilizable, cache y Swagger."
-            )
+            st.markdown("#### 📖 Sobre esta funcionalidad")
+            
+            st.markdown("""
+            Esta sección utiliza la **API REST de FastAPI** para:
+            
+            1. **Cargar el dataset procesado** (o raw si no está disponible)
+            2. **Filtrar reseñas** por sentimiento (positivo/negativo)
+            3. **Extraer tópicos** usando LDA (Latent Dirichlet Allocation)
+            4. **Retornar resultados** en formato JSON estructurado
+            
+            **Ventajas de usar la API:**
+            - ✅ Procesamiento centralizado y optimizado
+            - ✅ Reutilizable desde otras aplicaciones
+            - ✅ Cache de resultados para mejor rendimiento
+            - ✅ Documentación automática (Swagger)
+            
+            **Documentación completa:**
+            - 📖 [API_README.md](API_README.md)
+            - 🚀 [QUICKSTART_API.md](QUICKSTART_API.md)
+            - 📊 [API_SUMMARY.md](API_SUMMARY.md)
+            - 🌐 [Swagger UI](http://localhost:8000/docs)
+            """)
 
 # ======================
 # 11. Footer

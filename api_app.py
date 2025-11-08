@@ -1,346 +1,668 @@
+"""
+API REST completa para Hotel Reviews Analysis
+Maneja toda la lógica de negocio: datos, filtros, estadísticas, análisis, visualizaciones
+"""
+
 import pandas as pd
+import numpy as np
 import os
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional
-import joblib
-from fastapi import FastAPI, HTTPException
+from typing import List, Dict, Optional, Any
+from datetime import datetime
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import logging
 
-# Agregar el directorio de scripts al path
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Configuración de rutas
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "scripts"))
+DATA_PATH = ROOT / "data" / "hotel_reviews_processed.csv"
 
 # Importar módulos del pipeline
 from text_processing import clean_text
 from sentiment_analysis import ensure_vader, analyze_sentiment_batch, classify_sentiment
 from topic_modeling import extract_topics, get_extended_stop_words
 
+# ============================================================================
+# MODELOS PYDANTIC
+# ============================================================================
 
-# Configuración de FastAPI
+class ReviewInput(BaseModel):
+    """Modelo para recibir una reseña a analizar"""
+    text: str = Field(..., min_length=10, description="Texto de la reseña a analizar")
+
+class SentimentResult(BaseModel):
+    """Resultado del análisis de sentimiento"""
+    sentiment: str
+    compound_score: float
+    positive_score: float
+    negative_score: float
+    neutral_score: float
+
+class TopicResult(BaseModel):
+    """Tópico detectado con sus palabras clave"""
+    topic_id: int
+    keywords: str
+
+class AnalyzeResponse(BaseModel):
+    """Respuesta completa del análisis de una reseña"""
+    cleaned_text: str
+    sentiment: SentimentResult
+    topics: List[TopicResult]
+
+class DatasetStats(BaseModel):
+    """Estadísticas generales del dataset"""
+    total_reviews: int
+    total_hotels: int
+    total_countries: int
+    average_score: float
+    sentiment_distribution: Dict[str, int]
+    score_distribution: Dict[str, int]
+
+class FilterParams(BaseModel):
+    """Parámetros de filtrado"""
+    hotel: Optional[str] = None
+    sentiment: Optional[str] = None
+    nationality: Optional[str] = None
+    score_min: float = 0.0
+    score_max: float = 10.0
+    limit: Optional[int] = None
+
+class ReviewsResponse(BaseModel):
+    """Respuesta con reseñas filtradas"""
+    total_available: int
+    returned: int
+    filters_applied: Dict[str, Any]
+    reviews: List[Dict[str, Any]]
+
+class HotelsList(BaseModel):
+    """Lista de hoteles disponibles"""
+    total: int
+    hotels: List[str]
+
+class NationalitiesList(BaseModel):
+    """Lista de nacionalidades disponibles"""
+    total: int
+    nationalities: List[str]
+
+class TopicsAggregateResponse(BaseModel):
+    """Respuesta del endpoint de tópicos agregados"""
+    positive_topics: Dict[str, Any]
+    negative_topics: Dict[str, Any]
+    total_reviews_analyzed: int
+
+class WordCloudData(BaseModel):
+    """Datos para generar word cloud"""
+    words: Dict[str, int]
+    total_words: int
+
+# ============================================================================
+# FASTAPI APP
+# ============================================================================
+
 app = FastAPI(
-    title="Hotel Reviews Analysis API",
-    description="API para análisis de sentimientos y tópicos en reseñas de hoteles",
-    version="1.0.0"
+    title="Hotel Reviews Analysis API - Full Backend",
+    description="API completa para análisis de reseñas de hoteles. Maneja datos, filtros, estadísticas y ML.",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
-# Configurar CORS para permitir peticiones desde el dashboard
+# Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción, especificar dominios permitidos
+    allow_origins=[
+        "http://localhost:8501",
+        "https://*.streamlit.app",
+        "https://*.streamlitapp.com",
+        "*"  # En producción, especificar dominio exacto
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ============================================================================
+# CACHE Y ESTADO GLOBAL
+# ============================================================================
 
-# Modelos Pydantic
-class ReviewInput(BaseModel):
-    """Modelo para recibir una reseña a analizar"""
-    text: str = Field(..., min_length=10, description="Texto de la reseña a analizar")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "text": "The hotel was amazing! The staff was very friendly and the room was clean. Location is perfect."
-            }
-        }
-
-class SentimentResult(BaseModel):
-    """Resultado del análisis de sentimiento"""
-    sentiment: str = Field(..., description="Clasificación del sentimiento: positivo, negativo, neutro")
-    compound_score: float = Field(..., description="Score compuesto VADER (-1 a 1)")
-    positive_score: float = Field(..., description="Score positivo (0 a 1)")
-    negative_score: float = Field(..., description="Score negativo (0 a 1)")
-    neutral_score: float = Field(..., description="Score neutral (0 a 1)")
-
-class TopicResult(BaseModel):
-    """Tópico detectado con sus palabras clave"""
-    topic_id: int = Field(..., description="Identificador del tópico")
-    keywords: str = Field(..., description="Palabras clave del tópico separadas por comas")
-
-class AnalyzeResponse(BaseModel):
-    """Respuesta completa del análisis de una reseña"""
-    cleaned_text: str = Field(..., description="Texto limpio de la reseña")
-    sentiment: SentimentResult
-    topics: List[TopicResult]
-
-class TopicSummary(BaseModel):
-    """Resumen de tópicos por tipo de sentimiento"""
-    sentiment_type: str = Field(..., description="Tipo de sentimiento: positivo o negativo")
-    total_reviews: int = Field(..., description="Total de reseñas con este sentimiento")
-    topics: List[TopicResult]
-
-class TopicsAggregateResponse(BaseModel):
-    """Respuesta del endpoint de tópicos agregados"""
-    positive_topics: TopicSummary
-    negative_topics: TopicSummary
-    data_source: str = Field(..., description="Fuente de los datos")
-    total_reviews_analyzed: int
-
-
-# Variables globales y cache
 _cached_data: Optional[pd.DataFrame] = None
-_lda_models_cache = {}
+_cache_timestamp: Optional[datetime] = None
+CACHE_TTL_SECONDS = 300  # 5 minutos
 
-
-# Funciones auxiliares
-def load_processed_data() -> pd.DataFrame:
-    """Carga el dataset procesado o genera uno básico si no existe"""
-    global _cached_data
+def get_cached_data() -> pd.DataFrame:
+    """Obtiene datos con cache"""
+    global _cached_data, _cache_timestamp
     
-    if _cached_data is not None:
-        return _cached_data
+    now = datetime.now()
     
-    processed_path = ROOT / "data" / "hotel_reviews_processed.csv"
-    raw_path = ROOT / "data" / "Hotel_Reviews.csv"
+    # Si hay cache válido, retornar
+    if _cached_data is not None and _cache_timestamp is not None:
+        if (now - _cache_timestamp).total_seconds() < CACHE_TTL_SECONDS:
+            return _cached_data.copy()
     
-    if processed_path.exists():
-        print(f"Cargando dataset procesado desde {processed_path}")
-        _cached_data = pd.read_csv(processed_path)
-        return _cached_data
-    elif raw_path.exists():
-        print(f"Dataset procesado no encontrado. Cargando raw desde {raw_path}")
-        _cached_data = pd.read_csv(raw_path, nrows=10000)  # Limitar para no sobrecargar
-        
-        # Procesar básicamente
-        for col in ['Positive_Review', 'Negative_Review']:
-            if col in _cached_data.columns:
-                _cached_data[col] = _cached_data[col].apply(clean_text)
-        
-        # Crear review_text combinada
-        if 'Positive_Review' in _cached_data.columns and 'Negative_Review' in _cached_data.columns:
-            _cached_data['review_text'] = _cached_data.apply(
-                lambda row: f"{row['Positive_Review']}. {row['Negative_Review']}".strip(". "),
-                axis=1
-            )
-        
-        # Analizar sentimientos si no existen
-        if 'sentiment_label' not in _cached_data.columns:
-            print("Analizando sentimientos...")
-            ensure_vader()
-            scores = analyze_sentiment_batch(_cached_data['review_text'])
-            _cached_data = pd.concat([_cached_data, scores], axis=1)
-            _cached_data['sentiment_label'] = _cached_data['compound'].apply(classify_sentiment)
-        
-        return _cached_data
-    else:
-        raise FileNotFoundError("No se encontró ningún dataset (procesado ni raw)")
-
-def analyze_single_review(text: str) -> dict:
-    """Analiza una reseña individual y retorna sentimiento + tópicos"""
-    # Limpiar texto
-    cleaned = clean_text(text)
+    # Cargar datos
+    logger.info(f"Cargando datos desde {DATA_PATH}")
     
-    if not cleaned or len(cleaned) < 10:
-        raise ValueError("El texto es demasiado corto después de limpiarlo")
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=500, detail=f"Dataset no encontrado en {DATA_PATH}")
     
-    # Analizar sentimiento
-    ensure_vader()
-    from nltk.sentiment.vader import SentimentIntensityAnalyzer
-    sia = SentimentIntensityAnalyzer()
-    scores = sia.polarity_scores(cleaned)
-    
-    sentiment_label = classify_sentiment(scores['compound'])
-    
-    # Extraer tópicos (usando muestra del dataset para entrenar)
     try:
-        df_sample = pd.DataFrame({'review_text': [cleaned]})
+        df = pd.read_csv(DATA_PATH, encoding='utf-8')
+        logger.info(f"Dataset cargado: {len(df)} reseñas")
         
-        # Cargar datos para contexto si están disponibles
-        try:
-            df_context = load_processed_data()
-            # Usar muestra del contexto + la nueva reseña
-            sample_size = min(5000, len(df_context))
-            df_for_topics = pd.concat([
-                df_context.sample(n=sample_size, random_state=42)[['review_text']],
-                df_sample
-            ]).reset_index(drop=True)
-        except:
-            df_for_topics = df_sample
+        # Normalizar nombres de columnas
+        df = df.rename(columns={
+            "Hotel_Name": "Nombre del Hotel",
+            "Reviewer_Nationality": "Nacionalidad del Revisor",
+            "Positive_Review": "Reseña Positiva",
+            "Negative_Review": "Reseña Negativa",
+            "review_text": "Texto de Reseña",
+            "sentiment_label": "Etiqueta de Sentimiento",
+            "Reviewer_Score": "Puntuación del Revisor"
+        })
         
-        # Extraer tópicos
-        topics_raw = extract_topics(
-            df_for_topics,
-            text_column='review_text',
-            n_topics=5,
-            max_features=3000,
-            max_iter=10
-        )
+        # Limpiar datos
+        df["Puntuación del Revisor"] = pd.to_numeric(df["Puntuación del Revisor"], errors="coerce")
+        df["lat"] = pd.to_numeric(df.get("lat", pd.Series()), errors="coerce")
+        df["lng"] = pd.to_numeric(df.get("lng", pd.Series()), errors="coerce")
         
-        topics_list = [
-            {"topic_id": i+1, "keywords": topic.split(": ", 1)[1] if ": " in topic else topic}
-            for i, topic in enumerate(topics_raw)
-        ]
+        # Rellenar nulos
+        df["Nombre del Hotel"] = df["Nombre del Hotel"].fillna("Hotel Desconocido")
+        df["Nacionalidad del Revisor"] = df["Nacionalidad del Revisor"].fillna("Sin Especificar")
+        df["Reseña Positiva"] = df["Reseña Positiva"].fillna("")
+        df["Reseña Negativa"] = df["Reseña Negativa"].fillna("")
+        
+        # Crear columna "Texto de Reseña" si no existe
+        if "Texto de Reseña" not in df.columns or df["Texto de Reseña"].isna().all():
+            logger.info("Creando columna 'Texto de Reseña' combinando positivas y negativas")
+            df["Texto de Reseña"] = (
+                df["Reseña Positiva"].astype(str) + " " + df["Reseña Negativa"].astype(str)
+            ).str.strip()
+        
+        df["Texto de Reseña"] = df["Texto de Reseña"].fillna("")
+        df["Etiqueta de Sentimiento"] = df["Etiqueta de Sentimiento"].fillna("neutro")
+        
+        median_score = df["Puntuación del Revisor"].median()
+        df["Puntuación del Revisor"] = df["Puntuación del Revisor"].fillna(median_score)
+        
+        _cached_data = df
+        _cache_timestamp = now
+        
+        return df.copy()
         
     except Exception as e:
-        print(f"Error extrayendo tópicos: {e}")
-        topics_list = []
+        logger.error(f"Error cargando datos: {e}")
+        raise HTTPException(status_code=500, detail=f"Error cargando dataset: {str(e)}")
+
+def apply_filters(df: pd.DataFrame, filters: FilterParams) -> pd.DataFrame:
+    """Aplica filtros al dataframe"""
+    result = df.copy()
     
-    return {
-        "cleaned_text": cleaned,
-        "sentiment": {
-            "sentiment": sentiment_label,
-            "compound_score": scores['compound'],
-            "positive_score": scores['pos'],
-            "negative_score": scores['neg'],
-            "neutral_score": scores['neu']
-        },
-        "topics": topics_list
-    }
+    if filters.hotel and filters.hotel != "(Todos)":
+        result = result[result["Nombre del Hotel"] == filters.hotel]
+    
+    if filters.sentiment and filters.sentiment != "(Todos)":
+        result = result[result["Etiqueta de Sentimiento"] == filters.sentiment]
+    
+    if filters.nationality and filters.nationality != "(Todas)":
+        result = result[result["Nacionalidad del Revisor"] == filters.nationality]
+    
+    result = result[
+        (result["Puntuación del Revisor"] >= filters.score_min) &
+        (result["Puntuación del Revisor"] <= filters.score_max)
+    ]
+    
+    if filters.limit and filters.limit > 0:
+        result = result.head(filters.limit)
+    
+    return result
 
+# ============================================================================
+# ENDPOINTS
+# ============================================================================
 
-# Endpoints
-@app.get("/")
+@app.get("/", tags=["Info"])
 async def root():
-    """Endpoint raíz con información de la API"""
+    """Información de la API"""
     return {
-        "message": "Hotel Reviews Analysis API",
-        "version": "1.0.0",
+        "name": "Hotel Reviews Analysis API - Full Backend",
+        "version": "2.0.0",
+        "status": "online",
+        "description": "API completa que maneja toda la lógica de negocio",
         "endpoints": {
-            "/reviews/analyze": "POST - Analiza una reseña individual",
-            "/reviews/topics": "GET - Obtiene resumen de tópicos agregados",
-            "/docs": "Documentación interactiva"
-        }
+            "GET /health": "Health check",
+            "GET /stats": "Estadísticas del dataset",
+            "GET /hotels": "Lista de hoteles",
+            "GET /nationalities": "Lista de nacionalidades",
+            "POST /reviews/filter": "Obtener reseñas filtradas",
+            "POST /reviews/analyze": "Analizar una reseña individual",
+            "POST /reviews/topics": "Obtener tópicos agregados por sentimiento",
+            "POST /reviews/wordcloud": "Datos para word cloud"
+        },
+        "timestamp": datetime.now().isoformat()
     }
 
-@app.post("/reviews/analyze", response_model=AnalyzeResponse)
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Verificar salud de la API"""
+    try:
+        df = get_cached_data()
+        ensure_vader()
+        
+        return {
+            "status": "healthy",
+            "dataset_loaded": True,
+            "total_reviews": len(df),
+            "vader_available": True,
+            "cache_age_seconds": (datetime.now() - _cache_timestamp).total_seconds() if _cache_timestamp else None,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/stats", response_model=DatasetStats, tags=["Dataset"])
+async def get_stats():
+    """Obtener estadísticas generales del dataset"""
+    try:
+        df = get_cached_data()
+        
+        # Calcular distribución de sentimientos
+        sentiment_dist = df["Etiqueta de Sentimiento"].value_counts().to_dict()
+        
+        # Calcular distribución de puntuaciones
+        score_bins = pd.cut(df["Puntuación del Revisor"], bins=[0, 2, 4, 6, 8, 10])
+        score_dist = score_bins.value_counts().to_dict()
+        score_dist = {str(k): int(v) for k, v in score_dist.items()}
+        
+        return DatasetStats(
+            total_reviews=len(df),
+            total_hotels=df["Nombre del Hotel"].nunique(),
+            total_countries=df["Nacionalidad del Revisor"].nunique(),
+            average_score=float(df["Puntuación del Revisor"].mean()),
+            sentiment_distribution=sentiment_dist,
+            score_distribution=score_dist
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/hotels", response_model=HotelsList, tags=["Dataset"])
+async def get_hotels(limit: int = Query(None, ge=1, le=1000, description="Limitar número de hoteles")):
+    """Obtener lista de hoteles disponibles"""
+    try:
+        df = get_cached_data()
+        hotels = sorted(df["Nombre del Hotel"].unique().tolist())
+        
+        if limit:
+            hotels = hotels[:limit]
+        
+        return HotelsList(
+            total=len(hotels),
+            hotels=hotels
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting hotels: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/nationalities", response_model=NationalitiesList, tags=["Dataset"])
+async def get_nationalities(limit: int = Query(50, ge=1, le=500, description="Limitar número de nacionalidades")):
+    """Obtener lista de nacionalidades disponibles"""
+    try:
+        df = get_cached_data()
+        nationalities = sorted(df["Nacionalidad del Revisor"].unique().tolist())[:limit]
+        
+        return NationalitiesList(
+            total=len(nationalities),
+            nationalities=nationalities
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting nationalities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/reviews/filter", response_model=ReviewsResponse, tags=["Reviews"])
+async def filter_reviews(filters: FilterParams):
+    """
+    Obtener reseñas filtradas según criterios
+    
+    - **hotel**: Filtrar por nombre de hotel específico
+    - **sentiment**: Filtrar por sentimiento (positivo, negativo, neutro)
+    - **nationality**: Filtrar por nacionalidad del revisor
+    - **score_min**: Puntuación mínima (0-10)
+    - **score_max**: Puntuación máxima (0-10)
+    - **limit**: Número máximo de reseñas a retornar
+    """
+    try:
+        df = get_cached_data()
+        total_before = len(df)
+        
+        df_filtered = apply_filters(df, filters)
+        
+        # Convertir a lista de diccionarios
+        reviews = df_filtered.to_dict('records')
+        
+        return ReviewsResponse(
+            total_available=total_before,
+            returned=len(reviews),
+            filters_applied=filters.dict(),
+            reviews=reviews
+        )
+        
+    except Exception as e:
+        logger.error(f"Error filtering reviews: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/reviews/analyze", response_model=AnalyzeResponse, tags=["Analysis"])
 async def analyze_review(review: ReviewInput):
     """
-    Analiza una reseña y devuelve su sentimiento y los temas detectados.
+    Analizar una reseña individual
     
-    - **text**: Texto de la reseña a analizar (mínimo 10 caracteres)
-    
-    Retorna:
-    - **cleaned_text**: Texto limpio de la reseña
-    - **sentiment**: Clasificación del sentimiento con scores VADER
-    - **topics**: Lista de tópicos detectados con palabras clave
+    - Limpia el texto
+    - Calcula sentimiento (VADER)
+    - Extrae tópicos principales
     """
     try:
-        result = analyze_single_review(review.text)
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error procesando la reseña: {str(e)}")
-
-@app.get("/reviews/topics", response_model=TopicsAggregateResponse)
-async def get_aggregated_topics(n_topics: int = 8, max_reviews: int = 10000):
-    """
-    Provee un resumen agregado de los tópicos más mencionados en reseñas positivas y negativas.
-    
-    Parámetros:
-    - **n_topics**: Número de tópicos a extraer por categoría (default: 8)
-    - **max_reviews**: Máximo número de reseñas a analizar (default: 10000)
-    
-    Retorna:
-    - **positive_topics**: Tópicos extraídos de reseñas positivas
-    - **negative_topics**: Tópicos extraídos de reseñas negativas
-    - **data_source**: Fuente de los datos utilizados
-    - **total_reviews_analyzed**: Total de reseñas analizadas
-    """
-    try:
-        # Cargar datos
-        df = load_processed_data()
+        # Limpiar texto
+        cleaned_text = clean_text(review.text)
         
-        # Limitar número de reseñas si es necesario
-        if len(df) > max_reviews:
-            df = df.sample(n=max_reviews, random_state=42)
+        if len(cleaned_text.strip()) < 5:
+            raise HTTPException(status_code=400, detail="Texto muy corto después de limpieza")
         
-        # Verificar que existan las columnas necesarias
-        if 'sentiment_label' not in df.columns:
-            raise HTTPException(
-                status_code=500,
-                detail="El dataset no tiene análisis de sentimientos. Ejecute el pipeline principal primero."
+        # Análisis de sentimiento
+        ensure_vader()
+        from nltk.sentiment.vader import SentimentIntensityAnalyzer
+        sia = SentimentIntensityAnalyzer()
+        scores = sia.polarity_scores(cleaned_text)
+        
+        sentiment_label = classify_sentiment(scores['compound'])
+        
+        # Extraer tópicos
+        topics = []
+        try:
+            df_context = get_cached_data()
+            sample_size = min(5000, len(df_context))
+            df_for_topics = pd.concat([
+                df_context.sample(n=sample_size, random_state=42)[["Texto de Reseña"]].rename(columns={"Texto de Reseña": "review_text"}),
+                pd.DataFrame({"review_text": [cleaned_text]})
+            ]).reset_index(drop=True)
+            
+            topics_raw = extract_topics(
+                df_for_topics,
+                text_column='review_text',
+                n_topics=3,
+                max_features=2000,
+                max_iter=10
             )
+            
+            topics = [
+                TopicResult(
+                    topic_id=i+1,
+                    keywords=topic.split(": ", 1)[1] if ": " in topic else topic
+                )
+                for i, topic in enumerate(topics_raw)
+            ]
+        except Exception as e:
+            logger.warning(f"Error extrayendo tópicos: {e}")
         
-        if 'review_text' not in df.columns:
-            raise HTTPException(
-                status_code=500,
-                detail="El dataset no tiene la columna 'review_text'"
-            )
-        
-        # Filtrar reseñas positivas y negativas
-        df_positive = df[df['sentiment_label'] == 'positivo'].copy()
-        df_negative = df[df['sentiment_label'] == 'negativo'].copy()
-        
-        # Extraer tópicos de reseñas positivas
-        print(f"Extrayendo tópicos de {len(df_positive)} reseñas positivas...")
-        topics_pos_raw = extract_topics(
-            df_positive,
-            text_column='review_text',
-            n_topics=n_topics,
-            max_features=5000,
-            max_iter=15
+        return AnalyzeResponse(
+            cleaned_text=cleaned_text,
+            sentiment=SentimentResult(
+                sentiment=sentiment_label,
+                compound_score=scores['compound'],
+                positive_score=scores['pos'],
+                negative_score=scores['neg'],
+                neutral_score=scores['neu']
+            ),
+            topics=topics
         )
-        
-        topics_positive = [
-            {"topic_id": i+1, "keywords": topic.split(": ", 1)[1] if ": " in topic else topic}
-            for i, topic in enumerate(topics_pos_raw)
-        ]
-        
-        # Extraer tópicos de reseñas negativas
-        print(f"Extrayendo tópicos de {len(df_negative)} reseñas negativas...")
-        topics_neg_raw = extract_topics(
-            df_negative,
-            text_column='review_text',
-            n_topics=n_topics,
-            max_features=5000,
-            max_iter=15
-        )
-        
-        topics_negative = [
-            {"topic_id": i+1, "keywords": topic.split(": ", 1)[1] if ": " in topic else topic}
-            for i, topic in enumerate(topics_neg_raw)
-        ]
-        
-        # Construir respuesta
-        return {
-            "positive_topics": {
-                "sentiment_type": "positivo",
-                "total_reviews": len(df_positive),
-                "topics": topics_positive
-            },
-            "negative_topics": {
-                "sentiment_type": "negativo",
-                "total_reviews": len(df_negative),
-                "topics": topics_negative
-            },
-            "data_source": "hotel_reviews_processed.csv" if (ROOT / "data" / "hotel_reviews_processed.csv").exists() else "Hotel_Reviews.csv (muestra)",
-            "total_reviews_analyzed": len(df)
-        }
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generando resumen de tópicos: {str(e)}")
+        logger.error(f"Error analyzing review: {e}")
+        raise HTTPException(status_code=500, detail=f"Error procesando reseña: {str(e)}")
 
-@app.get("/health")
-async def health_check():
-    """Endpoint de salud para verificar que la API está funcionando"""
+@app.post("/reviews/topics", response_model=TopicsAggregateResponse, tags=["Analysis"])
+async def get_aggregated_topics(
+    filters: FilterParams,
+    n_topics: int = Query(5, ge=3, le=15, description="Número de tópicos a extraer"),
+):
+    """
+    Obtener tópicos agregados por sentimiento (positivo/negativo)
+    Aplica filtros antes de extraer tópicos
+    """
     try:
-        # Verificar que VADER está disponible
-        ensure_vader()
+        df = get_cached_data()
         
-        # Verificar que hay datos disponibles
-        df = load_processed_data()
+        # Aplicar filtros base
+        df_filtered = apply_filters(df, filters)
         
-        return {
-            "status": "healthy",
-            "vader_available": True,
-            "data_loaded": True,
-            "total_reviews": len(df)
-        }
+        if len(df_filtered) < 100:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Muy pocas reseñas después de filtrar ({len(df_filtered)}). Se necesitan al menos 100."
+            )
+        
+        # Separar por sentimiento
+        df_positive = df_filtered[df_filtered["Etiqueta de Sentimiento"] == "positivo"]
+        df_negative = df_filtered[df_filtered["Etiqueta de Sentimiento"] == "negativo"]
+        
+        result = {}
+        
+        # Tópicos positivos
+        if len(df_positive) >= 50:
+            logger.info(f"Extrayendo tópicos de {len(df_positive)} reseñas positivas")
+            topics_pos_raw = extract_topics(
+                df_positive.rename(columns={"Texto de Reseña": "review_text"}),
+                text_column='review_text',
+                n_topics=n_topics,
+                max_features=3000,
+                max_iter=15
+            )
+            
+            result['positive_topics'] = {
+                "sentiment_type": "positivo",
+                "total_reviews": len(df_positive),
+                "topics": [
+                    {
+                        "topic_id": i+1,
+                        "keywords": topic.split(": ", 1)[1] if ": " in topic else topic
+                    }
+                    for i, topic in enumerate(topics_pos_raw)
+                ]
+            }
+        
+        # Tópicos negativos
+        if len(df_negative) >= 50:
+            logger.info(f"Extrayendo tópicos de {len(df_negative)} reseñas negativas")
+            topics_neg_raw = extract_topics(
+                df_negative.rename(columns={"Texto de Reseña": "review_text"}),
+                text_column='review_text',
+                n_topics=n_topics,
+                max_features=3000,
+                max_iter=15
+            )
+            
+            result['negative_topics'] = {
+                "sentiment_type": "negativo",
+                "total_reviews": len(df_negative),
+                "topics": [
+                    {
+                        "topic_id": i+1,
+                        "keywords": topic.split(": ", 1)[1] if ": " in topic else topic
+                    }
+                    for i, topic in enumerate(topics_neg_raw)
+                ]
+            }
+        
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail="No hay suficientes reseñas para extraer tópicos"
+            )
+        
+        return TopicsAggregateResponse(
+            positive_topics=result.get('positive_topics', {"sentiment_type": "positivo", "total_reviews": 0, "topics": []}),
+            negative_topics=result.get('negative_topics', {"sentiment_type": "negativo", "total_reviews": 0, "topics": []}),
+            total_reviews_analyzed=len(df_filtered)
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        logger.error(f"Error generating topics: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/reviews/wordcloud", response_model=WordCloudData, tags=["Analysis"])
+async def get_wordcloud_data(
+    filters: FilterParams,
+    max_words: int = Query(100, ge=10, le=500, description="Número máximo de palabras"),
+    sample_size: int = Query(3000, ge=100, le=10000, description="Número de reseñas para samplear")
+):
+    """
+    Obtener datos para generar word cloud
+    Retorna frecuencia de palabras para visualización
+    """
+    try:
+        logger.info(f"Generando wordcloud con filtros: {filters.dict()}")
+        df = get_cached_data()
+        logger.info(f"Dataset cargado: {len(df)} reseñas")
+        
+        df_filtered = apply_filters(df, filters)
+        logger.info(f"Después de filtros: {len(df_filtered)} reseñas")
+        
+        if len(df_filtered) == 0:
+            logger.warning("No hay reseñas después de aplicar filtros")
+            raise HTTPException(status_code=404, detail="No hay reseñas con los filtros aplicados")
+        
+        # Samplear si es necesario
+        if len(df_filtered) > sample_size:
+            df_filtered = df_filtered.sample(n=sample_size, random_state=42)
+            logger.info(f"Sampleado a {len(df_filtered)} reseñas")
+        
+        # Combinar todo el texto
+        logger.info("Combinando texto de reseñas...")
+        text_column = "Texto de Reseña"
+        if text_column not in df_filtered.columns:
+            logger.error(f"Columna '{text_column}' no encontrada. Columnas disponibles: {df_filtered.columns.tolist()}")
+            raise HTTPException(status_code=500, detail=f"Columna '{text_column}' no encontrada en dataset")
+        
+        all_text = " ".join(df_filtered[text_column].dropna().astype(str).tolist())
+        logger.info(f"Texto combinado: {len(all_text)} caracteres")
+        
+        if len(all_text.strip()) == 0:
+            logger.warning("Texto vacío después de combinar reseñas")
+            return WordCloudData(words={}, total_words=0)
+        
+        # Limitar tamaño del texto para evitar problemas de memoria
+        max_chars = 500000  # 500K caracteres max
+        if len(all_text) > max_chars:
+            logger.info(f"Texto muy largo ({len(all_text)} chars), limitando a {max_chars}")
+            all_text = all_text[:max_chars]
+        
+        # Limpiar y tokenizar
+        logger.info("Limpiando y tokenizando texto...")
+        try:
+            cleaned = clean_text(all_text)
+            logger.info(f"Texto limpio: {len(cleaned)} caracteres")
+        except Exception as e:
+            logger.error(f"Error limpiando texto: {e}")
+            # Si falla la limpieza, usar el texto tal cual en minúsculas
+            cleaned = all_text.lower()
+        
+        words = cleaned.split()
+        logger.info(f"Total de palabras después de limpiar: {len(words)}")
+        
+        # Normalizar palabras a minúsculas para mejor procesamiento
+        words = [word.lower() for word in words if word]
+        
+        # Contar frecuencias
+        from collections import Counter
+        word_freq = Counter(words)
+        logger.info(f"Palabras únicas antes de filtrar stopwords: {len(word_freq)}")
+        
+        # Filtrar stopwords extendidas
+        try:
+            stopwords = get_extended_stop_words()
+            logger.info(f"Stopwords cargadas: {len(stopwords)}")
+        except Exception as e:
+            logger.warning(f"Error cargando stopwords: {e}, usando set básico")
+            stopwords = {
+                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
+                'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'been',
+                'be', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+                'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that',
+                'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they',
+                'hotel', 'room', 'stay', 'stayed', 'night', 'nights', 'very',
+                'good', 'great', 'nice', 'really', 'just', 'got', 'also', 'well'
+            }
+        
+        # Asegurar que todas las stopwords estén en minúsculas
+        stopwords = {word.lower() for word in stopwords}
+        
+        # Filtrar y mantener como Counter para usar most_common
+        filtered_freq = Counter({word: count for word, count in word_freq.items() 
+                                if word.lower() not in stopwords and len(word) > 2})
+        logger.info(f"Palabras únicas después de filtrar stopwords: {len(filtered_freq)}")
+        
+        # Top N palabras
+        top_words = dict(filtered_freq.most_common(max_words))
+        logger.info(f"Retornando top {len(top_words)} palabras")
+        
+        return WordCloudData(
+            words=top_words,
+            total_words=len(word_freq)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating wordcloud data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# STARTUP
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Cargar datos al iniciar"""
+    logger.info("Iniciando API Full Backend...")
+    try:
+        df = get_cached_data()
+        logger.info(f"API iniciada exitosamente. Dataset: {len(df)} reseñas")
+        ensure_vader()
+        logger.info("VADER inicializado")
+    except Exception as e:
+        logger.error(f"Error en startup: {e}")
+        raise
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
-    print("Iniciando API en http://localhost:8000")
-    print("Documentación disponible en http://localhost:8000/docs")
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
-
+    port = int(os.getenv("PORT", 8000))
+    logger.info(f"Iniciando servidor en puerto {port}")
+    uvicorn.run(
+        "api_app:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        log_level="info"
+    )
