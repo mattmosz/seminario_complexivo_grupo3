@@ -103,6 +103,31 @@ class WordCloudData(BaseModel):
     words: Dict[str, int]
     total_words: int
 
+class AggregatedMetrics(BaseModel):
+    """Métricas agregadas con filtros aplicados"""
+    total_reviews: int
+    filters_applied: Dict[str, Any]
+    sentiment_distribution: Dict[str, int]
+    sentiment_percentages: Dict[str, float]
+    score_distribution: Dict[str, int]
+    average_score: float
+    median_score: float
+    top_hotels: List[Dict[str, Any]]
+    top_nationalities: List[Dict[str, Any]]
+
+class TimeSeriesData(BaseModel):
+    """Datos de serie temporal"""
+    dates: List[str]
+    values: List[int]
+    metric: str
+
+class DistributionData(BaseModel):
+    """Datos de distribución para gráficos"""
+    labels: List[str]
+    values: List[int]
+    percentages: List[float]
+    metric: str
+
 # ============================================================================
 # FASTAPI APP
 # ============================================================================
@@ -666,6 +691,144 @@ async def get_wordcloud_data(
         raise
     except Exception as e:
         logger.error(f"Error generating wordcloud data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# ENDPOINTS - MÉTRICAS AGREGADAS
+# ============================================================================
+
+@app.post("/metrics/aggregated", response_model=AggregatedMetrics, tags=["Metrics"])
+async def get_aggregated_metrics(filters: FilterParams):
+    """
+    Obtiene métricas agregadas aplicando filtros.
+    Calcula distribuciones, promedios y rankings sin retornar reseñas individuales.
+    """
+    try:
+        logger.info(f"Calculating aggregated metrics with filters: {filters.dict()}")
+        
+        # Obtener datos
+        df = get_cached_data()
+        
+        # Aplicar filtros
+        filtered_df = apply_filters(df, filters)
+        
+        if filtered_df.empty:
+            return AggregatedMetrics(
+                total_reviews=0,
+                filters_applied=filters.dict(exclude={'offset', 'limit'}),
+                sentiment_distribution={},
+                sentiment_percentages={},
+                score_distribution={},
+                average_score=0.0,
+                median_score=0.0,
+                top_hotels=[],
+                top_nationalities=[]
+            )
+        
+        # Distribución de sentimientos
+        sentiment_counts = filtered_df["sentiment_label"].value_counts().to_dict()
+        total = len(filtered_df)
+        sentiment_percentages = {k: round((v/total)*100, 2) for k, v in sentiment_counts.items()}
+        
+        # Distribución de puntuaciones
+        score_distribution = filtered_df["Reviewer_Score"].value_counts().sort_index().to_dict()
+        score_distribution = {str(k): int(v) for k, v in score_distribution.items()}
+        
+        # Promedios
+        avg_score = float(filtered_df["Reviewer_Score"].mean())
+        median_score = float(filtered_df["Reviewer_Score"].median())
+        
+        # Top 10 hoteles
+        top_hotels_data = filtered_df.groupby("Hotel_Name").agg({
+            "Reviewer_Score": ["count", "mean"]
+        }).reset_index()
+        top_hotels_data.columns = ["hotel", "review_count", "avg_score"]
+        top_hotels_data = top_hotels_data.sort_values("review_count", ascending=False).head(10)
+        top_hotels = top_hotels_data.to_dict('records')
+        for hotel in top_hotels:
+            hotel["review_count"] = int(hotel["review_count"])
+            hotel["avg_score"] = round(float(hotel["avg_score"]), 2)
+        
+        # Top 10 nacionalidades
+        top_nationalities_data = filtered_df["Reviewer_Nationality"].value_counts().head(10)
+        top_nationalities = [
+            {"nationality": str(nat), "review_count": int(count)}
+            for nat, count in top_nationalities_data.items()
+        ]
+        
+        logger.info(f"Aggregated metrics calculated: {total} reviews")
+        
+        return AggregatedMetrics(
+            total_reviews=total,
+            filters_applied=filters.dict(exclude={'offset', 'limit'}),
+            sentiment_distribution=sentiment_counts,
+            sentiment_percentages=sentiment_percentages,
+            score_distribution=score_distribution,
+            average_score=round(avg_score, 2),
+            median_score=round(median_score, 2),
+            top_hotels=top_hotels,
+            top_nationalities=top_nationalities
+        )
+        
+    except Exception as e:
+        logger.error(f"Error calculating aggregated metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/metrics/distribution", response_model=DistributionData, tags=["Metrics"])
+async def get_distribution(
+    filters: FilterParams,
+    metric: str = Query(..., description="Métrica a distribuir: 'sentiment', 'score', 'hotel', 'nationality'")
+):
+    """
+    Obtiene distribución de una métrica específica con filtros.
+    Útil para generar gráficos de barras/pie.
+    """
+    try:
+        logger.info(f"Getting distribution for '{metric}' with filters")
+        
+        # Obtener datos
+        df = get_cached_data()
+        
+        filtered_df = apply_filters(df, filters)
+        
+        if filtered_df.empty:
+            return DistributionData(
+                labels=[],
+                values=[],
+                percentages=[],
+                metric=metric
+            )
+        
+        total = len(filtered_df)
+        
+        if metric == "sentiment":
+            dist = filtered_df["sentiment_label"].value_counts()
+        elif metric == "score":
+            dist = filtered_df["Reviewer_Score"].value_counts().sort_index()
+        elif metric == "hotel":
+            dist = filtered_df["Hotel_Name"].value_counts().head(20)
+        elif metric == "nationality":
+            dist = filtered_df["Reviewer_Nationality"].value_counts().head(20)
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid metric: {metric}")
+        
+        labels = [str(label) for label in dist.index.tolist()]
+        values = [int(val) for val in dist.values.tolist()]
+        percentages = [round((val/total)*100, 2) for val in values]
+        
+        logger.info(f"Distribution calculated: {len(labels)} categories")
+        
+        return DistributionData(
+            labels=labels,
+            values=values,
+            percentages=percentages,
+            metric=metric
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting distribution: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
