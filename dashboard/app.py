@@ -732,9 +732,85 @@ DATA_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "hotel_reviews_
 BASE_API_URL = None  # Ejemplo: "http://localhost:8000/v1"
 TOKEN = None          # Ejemplo: "tu_token_si_usas_auth"
 
+# ============================================================================
+# FUNCIONES DE CARGA - NUEVA ARQUITECTURA (SOLO API, NO CARGAR DATASET COMPLETO)
+# ============================================================================
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_aggregated_metrics(filters: dict) -> dict | None:
+    """
+    Obtiene métricas agregadas desde la API (NO carga reseñas completas).
+    Usa filtros para calcular estadísticas del lado del servidor.
+    TTL: 5 minutos
+    """
+    try:
+        response = requests.post(
+            f"{API_URL}/metrics/aggregated",
+            json=filters,
+            timeout=API_TIMEOUT
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error obteniendo métricas: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error conectando con API: {e}")
+        return None
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_distribution_data(filters: dict, metric: str) -> dict | None:
+    """
+    Obtiene distribución de una métrica específica desde la API.
+    metrics: 'sentiment', 'score', 'hotel', 'nationality'
+    TTL: 5 minutos
+    """
+    try:
+        response = requests.post(
+            f"{API_URL}/metrics/distribution?metric={metric}",
+            json=filters,
+            timeout=API_TIMEOUT
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error obteniendo distribución: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error conectando con API: {e}")
+        return None
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_sample_reviews(filters: dict, limit: int = 100) -> dict | None:
+    """
+    Obtiene una muestra pequeña de reseñas para mostrar en tablas.
+    Solo se usa para visualización, NO para análisis masivo.
+    TTL: 10 minutos
+    """
+    try:
+        filters_with_limit = {**filters, "limit": limit, "offset": 0}
+        response = requests.post(
+            f"{API_URL}/reviews/filter",
+            json=filters_with_limit,
+            timeout=API_TIMEOUT
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error obteniendo muestra: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error conectando con API: {e}")
+        return None
+
+# LEGACY: Mantener por compatibilidad pero NO USAR para análisis
 @st.cache_data(show_spinner="🔄 Cargando datos desde API...")
 def load_data() -> pd.DataFrame | None:
-    """Carga todos los datos del dataset usando estrategia de carga por lotes"""
+    """
+    DEPRECATED: Esta función carga TODO el dataset (512K reseñas).
+    SOLO usar para tabs legacy que aún no se migraron.
+    NUEVO: Usar get_aggregated_metrics() y get_sample_reviews() en su lugar.
+    """
     
     # Verificar que API esté disponible
     if not check_api_available():
@@ -1000,16 +1076,45 @@ with st.sidebar:
             st.info("Si usas Render Free Tier, espera 1 min y recarga la página.")
 
 # ======================
-# 6. Aplicar Filtros (vía API)
+# 6. Aplicar Filtros (HÍBRIDO: API para métricas + muestra local para visuales legacy)
 # ======================
 
 if not api_available:
     st.error("⚠️ No se pueden aplicar filtros sin conexión a la API")
     st.stop()
 
-# Crear objeto de filtros para aplicar localmente
-# CAMBIO: Ahora filtramos localmente el DataFrame completo cargado (512K reseñas)
-# en lugar de llamar a la API cada vez
+# Crear filtros para API
+api_filters = {
+    "hotel": col_hotel if col_hotel != "(Todos)" else None,
+    "sentiment": col_sent if use_vader and col_sent != "(Todos)" else None,
+    "nationality": col_nat if col_nat != "(Todas)" else None,
+    "score_min": score_lo,
+    "score_max": score_hi,
+    "offset": 0,
+    "limit": None
+}
+
+# NUEVO: Obtener métricas agregadas desde la API (más eficiente)
+with st.spinner("📊 Calculando métricas desde API..."):
+    metrics = get_aggregated_metrics(api_filters)
+
+if not metrics or metrics["total_reviews"] == 0:
+    st.warning("⚠️ No hay reseñas que coincidan con los filtros aplicados")
+    st.stop()
+
+# Extraer métricas pre-calculadas
+total_filtered = metrics["total_reviews"]
+sentiment_distribution = metrics["sentiment_distribution"]
+sentiment_percentages = metrics["sentiment_percentages"]
+score_distribution = metrics["score_distribution"]
+avg_score_api = metrics["average_score"]
+median_score_api = metrics["median_score"]
+top_hotels_api = metrics["top_hotels"]
+top_nationalities_api = metrics["top_nationalities"]
+
+# LEGACY: Para tabs que aún necesitan DataFrame (ej: wordclouds, mapas)
+# Cargar solo una MUESTRA (no todo) para visuales
+# TODO: Migrar estas tabs a usar endpoints específicos de la API
 current_filters = {
     "hotel": col_hotel if col_hotel != "(Todos)" else None,
     "sentiment": col_sent if use_vader and col_sent != "(Todos)" else None,
@@ -1018,26 +1123,22 @@ current_filters = {
     "score_max": score_hi
 }
 
-# Aplicar filtros LOCALMENTE sobre el DataFrame completo
-dff = df.copy()
+dff = df.copy() if df is not None else pd.DataFrame()
 
-if current_filters["hotel"]:
-    dff = dff[dff["Nombre del Hotel"] == current_filters["hotel"]]
+if not dff.empty:
+    if current_filters["hotel"]:
+        dff = dff[dff["Nombre del Hotel"] == current_filters["hotel"]]
 
-if current_filters["sentiment"]:
-    dff = dff[dff["Etiqueta de Sentimiento"] == current_filters["sentiment"]]
+    if current_filters["sentiment"]:
+        dff = dff[dff["Etiqueta de Sentimiento"] == current_filters["sentiment"]]
 
-if current_filters["nationality"]:
-    dff = dff[dff["Nacionalidad del Revisor"] == current_filters["nationality"]]
+    if current_filters["nationality"]:
+        dff = dff[dff["Nacionalidad del Revisor"] == current_filters["nationality"]]
 
-dff = dff[
-    (dff["Puntuación del Revisor"] >= current_filters["score_min"]) &
-    (dff["Puntuación del Revisor"] <= current_filters["score_max"])
-]
-
-if len(dff) == 0:
-    st.warning("⚠️ No hay reseñas que coincidan con los filtros aplicados")
-    st.stop()
+    dff = dff[
+        (dff["Puntuación del Revisor"] >= current_filters["score_min"]) &
+        (dff["Puntuación del Revisor"] <= current_filters["score_max"])
+    ]
 
 # ======================
 # 7. Header Principal
@@ -1049,19 +1150,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================
-# 8. KPIs Principales (Mejorados)
+# 8. KPIs Principales (HÍBRIDO: API + legacy)
 # ======================
-filtered_reviews = len(dff)
-avg_score = float(dff["Puntuación del Revisor"].mean()) if filtered_reviews else 0.0
+
+# Usar métricas de la API (más eficientes y precisas)
+filtered_reviews = total_filtered
+avg_score = avg_score_api
+
+# Obtener total del dataset
+if 'total_dataset_reviews' not in st.session_state:
+    stats = get_stats_from_api()
+    st.session_state.total_dataset_reviews = stats.get("total_reviews", 0) if stats else 0
+
+total_dataset_reviews = st.session_state.total_dataset_reviews
 
 if use_vader:
-    pos_pct = round(100 * dff["Etiqueta de Sentimiento"].eq("positivo").mean(), 1) if filtered_reviews else 0.0
-    neg_pct = round(100 * dff["Etiqueta de Sentimiento"].eq("negativo").mean(), 1) if filtered_reviews else 0.0
+    pos_pct = sentiment_percentages.get("positivo", 0.0)
+    neg_pct = sentiment_percentages.get("negativo", 0.0)
 else:
     pos_pct = 0.0
     neg_pct = 0.0
 
-unique_hotels = dff["Nombre del Hotel"].nunique()
+# Usar top_hotels de la API
+unique_hotels = len(top_hotels_api) if len(top_hotels_api) < 10 else "10+"
 
 st.markdown(f"""
 <div class="kpi-container">
@@ -1093,7 +1204,7 @@ st.markdown(f"""
         <div class="kpi-badge">HOTELES</div>
         <div class="kpi-icon-circle hotel"></div>
         <div class="kpi-value">{unique_hotels}</div>
-        <div class="kpi-label">Únicos</div>
+        <div class="kpi-label">Top Filtrados</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
