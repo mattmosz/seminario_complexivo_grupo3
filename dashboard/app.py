@@ -1824,21 +1824,21 @@ with tab_api:
                             with col_s2:
                                 st.metric(
                                     "😊 Positivo",
-                                    f"{sentiment['positive_score']:.3f}",
+                                    f"{sentiment['positive_score'] * 100:.1f}%",
                                     help="Proporción de palabras positivas"
                                 )
                             
                             with col_s3:
                                 st.metric(
                                     "😐 Neutral",
-                                    f"{sentiment['neutral_score']:.3f}",
+                                    f"{sentiment['neutral_score'] * 100:.1f}%",
                                     help="Proporción de palabras neutrales"
                                 )
                             
                             with col_s4:
                                 st.metric(
                                     "😞 Negativo",
-                                    f"{sentiment['negative_score']:.3f}",
+                                    f"{sentiment['negative_score'] * 100:.1f}%",
                                     help="Proporción de palabras negativas"
                                 )
                             
@@ -1846,7 +1846,7 @@ with tab_api:
                             fig_sentiment = go.Figure(data=[
                                 go.Bar(
                                     x=['Positivo', 'Neutral', 'Negativo'],
-                                    y=[sentiment['positive_score'], sentiment['neutral_score'], sentiment['negative_score']],
+                                    y=[sentiment['positive_score'] * 100, sentiment['neutral_score'] * 100, sentiment['negative_score'] * 100],
                                     marker_color=['#10b981', '#6b7280', '#ef4444'],
                                     text=[f"{sentiment['positive_score']:.2%}", 
                                           f"{sentiment['neutral_score']:.2%}", 
@@ -1857,7 +1857,8 @@ with tab_api:
                             
                             fig_sentiment.update_layout(
                                 title="Distribución de Sentimientos",
-                                yaxis_title="Proporción",
+                                yaxis_title="Porcentaje",
+                                yaxis=dict(ticksuffix="%"),
                                 height=350,
                                 showlegend=False,
                                 template="plotly_white"
