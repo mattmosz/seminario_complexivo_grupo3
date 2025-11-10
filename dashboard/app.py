@@ -65,11 +65,9 @@ def get_stats_from_api() -> dict | None:
             return response.json()
         else:
             st.error(f"Error en /stats: Status {response.status_code}")
-            st.code(response.text[:500])  # Mostrar primeros 500 chars
             return None
     except requests.exceptions.JSONDecodeError as e:
         st.error(f"Error parseando JSON de /stats: {e}")
-        st.code(f"Response text: {response.text[:500]}")
         return None
     except Exception as e:
         st.error(f"Error en get_stats_from_api: {type(e).__name__}: {e}")
@@ -99,7 +97,7 @@ def get_nationalities_from_api(limit: int = 50) -> list:
 
 def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None, 
                                   score_min=0.0, score_max=10.0, limit=None) -> dict | None:
-    """Obtiene reseñas filtradas desde la API"""
+    """Obtiene reseñas filtradas desde la API (modo simple sin debug)"""
     try:
         filters = {
             "hotel": hotel if hotel != "(Todos)" else None,
@@ -110,12 +108,7 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             "limit": limit
         }
         
-        # Debug: mostrar solicitud
-        st.write(f"🔍 POST a: {API_URL}/reviews/filter")
-        st.write(f"📋 Filtros: {filters}")
-        
-        # Timeout generoso para datasets grandes: 60s para todos los casos
-        timeout_value = API_TIMEOUT  # Usa el timeout configurado (60s por defecto)
+        timeout_value = API_TIMEOUT
         
         response = requests.post(
             f"{API_URL}/reviews/filter",
@@ -123,37 +116,56 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             timeout=timeout_value
         )
         
-        # Debug: mostrar respuesta
-        st.write(f"📊 Status: {response.status_code}")
-        st.write(f"📄 Content-Type: {response.headers.get('Content-Type', 'N/A')}")
-        st.write(f"📏 Longitud: {len(response.text)} chars")
-        st.code(f"Primeros 300 chars:\n{response.text[:300]}")
-        
         if response.status_code == 200:
-            data = response.json()
-            st.write(f"✅ Tipo de datos recibidos: {type(data).__name__}")
-            if isinstance(data, dict):
-                st.write(f"🔑 Keys: {list(data.keys())}")
-            return data
+            return response.json()
         else:
             st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
             return None
     except requests.exceptions.Timeout:
-        st.error(f"⏱️ La petición excedió el tiempo límite ({timeout_value}s). El dataset es muy grande o la API está procesando muchos datos. Intenta con filtros más específicos.")
-        st.info("💡 Sugerencia: Filtra por hotel específico o rango de fechas más pequeño.")
+        st.error(f"⏱️ Timeout ({timeout_value}s). Intenta con filtros más específicos.")
         return None
     except requests.exceptions.ConnectionError:
-        st.error("🔌 No se pudo conectar a la API. Verifica que esté corriendo.")
+        st.error("🔌 No se pudo conectar a la API.")
         return None
     except requests.exceptions.JSONDecodeError as e:
         st.error(f"❌ Error parseando JSON: {e}")
-        st.code(f"Response text:\n{response.text[:500]}")
         return None
     except Exception as e:
-        st.error(f"❌ Error inesperado: {type(e).__name__}: {e}")
-        import traceback
-        st.code(traceback.format_exc())
+        st.error(f"❌ Error: {type(e).__name__}: {e}")
         return None
+
+def get_filtered_reviews_with_offset(offset: int = 0, limit: int = 50000, 
+                                     hotel=None, sentiment=None, nationality=None,
+                                     score_min=0.0, score_max=10.0) -> dict | None:
+    """Obtiene reseñas filtradas con paginación (offset/limit) para carga por lotes"""
+    try:
+        filters = {
+            "hotel": hotel if hotel != "(Todos)" else None,
+            "sentiment": sentiment if sentiment != "(Todos)" else None,
+            "nationality": nationality if nationality != "(Todas)" else None,
+            "score_min": score_min,
+            "score_max": score_max,
+            "offset": offset,
+            "limit": limit
+        }
+        
+        response = requests.post(
+            f"{API_URL}/reviews/filter",
+            json=filters,
+            timeout=120  # Timeout más largo para lotes grandes
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error {response.status_code} en lote offset={offset}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        st.error(f"⏱️ Timeout cargando lote offset={offset}")
+        return None
+    except Exception as e:
+        st.error(f"❌ Error en lote offset={offset}: {e}")
         return None
 
 def analyze_review_with_api(review_text: str) -> dict | None:
@@ -711,41 +723,66 @@ TOKEN = None          # Ejemplo: "tu_token_si_usas_auth"
 
 @st.cache_data(show_spinner="🔄 Cargando datos desde API...")
 def load_data() -> pd.DataFrame | None:
-    """Intenta cargar datos desde API. Retorna None si API no disponible."""
+    """Carga todos los datos del dataset usando estrategia de carga por lotes"""
     
-    st.write("🚀 DEBUG: Iniciando load_data()")
-    
-    # Verificar que API esté disponible (sin bloquear)
+    # Verificar que API esté disponible
     if not check_api_available():
-        st.error("❌ DEBUG: API no disponible")
+        st.error("❌ API no disponible")
         return None
     
-    st.success("✅ DEBUG: API disponible")
-    
     try:
-        # Cargar TODOS los datos sin límite
-        with st.spinner("📊 Cargando datos desde API..."):
-            st.write("🔍 DEBUG: Llamando a get_filtered_reviews_from_api(limit=None)")
-            result = get_filtered_reviews_from_api(limit=None)  # SIN LÍMITE - datos completos
+        # ESTRATEGIA: Carga por lotes (batching) para obtener TODOS los datos sin timeout
+        BATCH_SIZE = 50000  # Lotes de 50K reseñas (seguro para Cloud Run 2GB)
+        all_reviews = []
+        batch_num = 0
+        
+        # Obtener el total de reseñas disponibles
+        stats = get_stats_from_api()
+        if not stats:
+            st.error("❌ No se pudo obtener estadísticas de la API")
+            return None
+        
+        total_reviews = stats.get("total_reviews", 0)
+        total_batches = (total_reviews + BATCH_SIZE - 1) // BATCH_SIZE  # Redondeo hacia arriba
+        
+        st.info(f"📊 Cargando {total_reviews:,} reseñas en {total_batches} lotes de hasta {BATCH_SIZE:,} cada uno")
+        
+        # Crear barra de progreso
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Cargar en lotes usando offset
+        for offset in range(0, total_reviews, BATCH_SIZE):
+            batch_num += 1
+            limit = min(BATCH_SIZE, total_reviews - offset)
             
-            st.write(f"📦 DEBUG: Tipo de result: {type(result).__name__ if result else 'None'}")
+            status_text.text(f"⏳ Lote {batch_num}/{total_batches}: cargando registros {offset:,} - {offset+limit:,}...")
+            
+            # Llamar a la API con offset y limit
+            result = get_filtered_reviews_with_offset(offset=offset, limit=limit)
             
             if result is None:
-                st.error("❌ DEBUG: result es None")
-                return None
-            
-            if isinstance(result, dict):
-                st.write(f"🔑 DEBUG: Keys: {list(result.keys())}")
+                st.error(f"❌ Error cargando lote {batch_num}")
+                break
             
             reviews = result.get("reviews", [])
-            st.write(f"📋 DEBUG: {len(reviews)} reseñas obtenidas")
+            all_reviews.extend(reviews)
             
-            if not reviews:
-                st.warning("⚠️ DEBUG: Lista de reseñas vacía")
-                return None
-            
-            df = pd.DataFrame(reviews)
-            st.success(f"✅ DEBUG: DataFrame {df.shape[0]}x{df.shape[1]} creado")
+            # Actualizar progreso
+            progress = min(1.0, len(all_reviews) / total_reviews)
+            progress_bar.progress(progress)
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        if not all_reviews:
+            st.error("❌ No se pudieron cargar reseñas")
+            return None
+        
+        st.success(f"✅ {len(all_reviews):,} reseñas cargadas exitosamente")
+        
+        # Crear DataFrame
+        df = pd.DataFrame(all_reviews)
         
         # Asegurar que las columnas estén en español (ya deberían venir así de la API)
         if "Hotel_Name" in df.columns:
