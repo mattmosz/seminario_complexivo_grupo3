@@ -206,6 +206,7 @@ def apply_filters(df: pd.DataFrame, filters: FilterParams) -> pd.DataFrame:
     """Aplica filtros al dataframe con soporte para paginación (offset/limit)"""
     result = df.copy()
     
+    # Aplicar filtros de criterios
     if filters.hotel and filters.hotel != "(Todos)":
         result = result[result["Nombre del Hotel"] == filters.hotel]
     
@@ -215,14 +216,22 @@ def apply_filters(df: pd.DataFrame, filters: FilterParams) -> pd.DataFrame:
     if filters.nationality and filters.nationality != "(Todas)":
         result = result[result["Nacionalidad del Revisor"] == filters.nationality]
     
+    # Filtro por score
     result = result[
         (result["Puntuación del Revisor"] >= filters.score_min) &
         (result["Puntuación del Revisor"] <= filters.score_max)
     ]
     
+    # Reset index antes de aplicar offset (importante para iloc)
+    result = result.reset_index(drop=True)
+    
     # Aplicar paginación: offset + limit
     if filters.offset > 0:
-        result = result.iloc[filters.offset:]
+        if filters.offset < len(result):
+            result = result.iloc[filters.offset:]
+        else:
+            # Offset fuera de rango, retornar DataFrame vacío
+            result = result.iloc[0:0]
     
     if filters.limit and filters.limit > 0:
         result = result.head(filters.limit)
@@ -353,11 +362,15 @@ async def filter_reviews(filters: FilterParams):
     - **limit**: Número máximo de reseñas a retornar (por defecto 50,000 para carga por lotes)
     """
     try:
+        logger.info(f"Received filter request: offset={filters.offset}, limit={filters.limit}")
+        
         df = get_cached_data()
         total_before = len(df)
+        logger.info(f"Total reviews in dataset: {total_before}")
         
         # Aplicar filtros (incluye offset y limit internamente)
         df_filtered = apply_filters(df, filters)
+        logger.info(f"After filters: {len(df_filtered)} reviews")
         
         # Si no se especifica limit, usar límite seguro por defecto
         DEFAULT_LIMIT = 50000  # Límite seguro para Cloud Run con 2GB RAM
@@ -368,6 +381,7 @@ async def filter_reviews(filters: FilterParams):
                 df_filtered = df_filtered.head(DEFAULT_LIMIT)
         
         # Convertir a lista de diccionarios (optimizado para JSON)
+        logger.info(f"Converting {len(df_filtered)} rows to dict...")
         reviews = df_filtered.to_dict('records')
         
         logger.info(f"Returning {len(reviews)} reviews (offset={filters.offset}, limit={filters.limit or DEFAULT_LIMIT})")
@@ -380,7 +394,7 @@ async def filter_reviews(filters: FilterParams):
         )
         
     except Exception as e:
-        logger.error(f"Error filtering reviews: {e}")
+        logger.error(f"Error filtering reviews: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/reviews/analyze", response_model=AnalyzeResponse, tags=["Analysis"])
