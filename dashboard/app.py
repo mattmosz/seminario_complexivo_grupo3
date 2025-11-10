@@ -63,8 +63,16 @@ def get_stats_from_api() -> dict | None:
         response = requests.get(f"{API_URL}/stats", timeout=30)  # 30s para stats
         if response.status_code == 200:
             return response.json()
+        else:
+            st.error(f"Error en /stats: Status {response.status_code}")
+            st.code(response.text[:500])  # Mostrar primeros 500 chars
+            return None
+    except requests.exceptions.JSONDecodeError as e:
+        st.error(f"Error parseando JSON de /stats: {e}")
+        st.code(f"Response text: {response.text[:500]}")
         return None
-    except:
+    except Exception as e:
+        st.error(f"Error en get_stats_from_api: {type(e).__name__}: {e}")
         return None
 
 @st.cache_data(ttl=300)
@@ -102,6 +110,10 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             "limit": limit
         }
         
+        # Debug: mostrar solicitud
+        st.write(f"🔍 POST a: {API_URL}/reviews/filter")
+        st.write(f"📋 Filtros: {filters}")
+        
         # Timeout generoso para datasets grandes: 60s para todos los casos
         timeout_value = API_TIMEOUT  # Usa el timeout configurado (60s por defecto)
         
@@ -111,8 +123,18 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             timeout=timeout_value
         )
         
+        # Debug: mostrar respuesta
+        st.write(f"📊 Status: {response.status_code}")
+        st.write(f"📄 Content-Type: {response.headers.get('Content-Type', 'N/A')}")
+        st.write(f"📏 Longitud: {len(response.text)} chars")
+        st.code(f"Primeros 300 chars:\n{response.text[:300]}")
+        
         if response.status_code == 200:
-            return response.json()
+            data = response.json()
+            st.write(f"✅ Tipo de datos recibidos: {type(data).__name__}")
+            if isinstance(data, dict):
+                st.write(f"🔑 Keys: {list(data.keys())}")
+            return data
         else:
             st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
             return None
@@ -123,8 +145,15 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
     except requests.exceptions.ConnectionError:
         st.error("🔌 No se pudo conectar a la API. Verifica que esté corriendo.")
         return None
+    except requests.exceptions.JSONDecodeError as e:
+        st.error(f"❌ Error parseando JSON: {e}")
+        st.code(f"Response text:\n{response.text[:500]}")
+        return None
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        st.error(f"❌ Error inesperado: {type(e).__name__}: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None
         return None
 
 def analyze_review_with_api(review_text: str) -> dict | None:
@@ -684,24 +713,39 @@ TOKEN = None          # Ejemplo: "tu_token_si_usas_auth"
 def load_data() -> pd.DataFrame | None:
     """Intenta cargar datos desde API. Retorna None si API no disponible."""
     
+    st.write("🚀 DEBUG: Iniciando load_data()")
+    
     # Verificar que API esté disponible (sin bloquear)
     if not check_api_available():
+        st.error("❌ DEBUG: API no disponible")
         return None
+    
+    st.success("✅ DEBUG: API disponible")
     
     try:
         # Cargar TODOS los datos sin límite
-        with st.spinner("� Cargando datos desde API..."):
+        with st.spinner("📊 Cargando datos desde API..."):
+            st.write("🔍 DEBUG: Llamando a get_filtered_reviews_from_api(limit=None)")
             result = get_filtered_reviews_from_api(limit=None)  # SIN LÍMITE - datos completos
             
+            st.write(f"📦 DEBUG: Tipo de result: {type(result).__name__ if result else 'None'}")
+            
             if result is None:
+                st.error("❌ DEBUG: result es None")
                 return None
             
+            if isinstance(result, dict):
+                st.write(f"🔑 DEBUG: Keys: {list(result.keys())}")
+            
             reviews = result.get("reviews", [])
+            st.write(f"📋 DEBUG: {len(reviews)} reseñas obtenidas")
             
             if not reviews:
+                st.warning("⚠️ DEBUG: Lista de reseñas vacía")
                 return None
             
             df = pd.DataFrame(reviews)
+            st.success(f"✅ DEBUG: DataFrame {df.shape[0]}x{df.shape[1]} creado")
         
         # Asegurar que las columnas estén en español (ya deberían venir así de la API)
         if "Hotel_Name" in df.columns:
@@ -718,7 +762,9 @@ def load_data() -> pd.DataFrame | None:
         return df
         
     except Exception as e:
-        st.error(f"⚠️ Error cargando datos: {e}")
+        st.error(f"⚠️ Error cargando datos: {type(e).__name__}: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return None
 
 # --- Inicialización INSTANTÁNEA del dashboard ---
