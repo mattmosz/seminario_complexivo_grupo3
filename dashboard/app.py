@@ -29,25 +29,26 @@ st.caption("Inicializando componentes...")
 try:
     if "API_URL" in st.secrets:
         API_URL = st.secrets["API_URL"]
-        API_TIMEOUT = st.secrets.get("API_TIMEOUT", 10)
+        API_TIMEOUT = st.secrets.get("API_TIMEOUT", 60)  # 60s para datasets grandes
     else:
         # Desarrollo local
         API_URL = os.getenv("API_URL", "http://localhost:8000")
-        API_TIMEOUT = int(os.getenv("API_TIMEOUT", "10"))
+        API_TIMEOUT = int(os.getenv("API_TIMEOUT", "60"))  # 60s timeout
 except Exception as e:
     # Si falla, usar valores por defecto
     API_URL = "http://localhost:8000"
-    API_TIMEOUT = 10
+    API_TIMEOUT = 60
 
 # ---------- Funciones para integración con API ----------
 
 def check_api_available_fast() -> bool:
-    """Verifica si la API está disponible con timeout ultra-rápido (sin cache)"""
+    """Verifica si la API está disponible con timeout de 5 segundos"""
     try:
-        res = requests.get(f"{API_URL}/health", timeout=0.5)  # 0.5 segundos máximo - ultra rápido
+        res = requests.get(f"{API_URL}/health", timeout=5)  # 5 segundos para health check
         return res.status_code == 200
     except Exception as e:
         # Fallar silenciosamente y rápido
+        return False
         return False
 
 @st.cache_data(ttl=60)
@@ -59,7 +60,7 @@ def check_api_available() -> bool:
 def get_stats_from_api() -> dict | None:
     """Obtiene estadísticas generales desde la API"""
     try:
-        response = requests.get(f"{API_URL}/stats", timeout=10)
+        response = requests.get(f"{API_URL}/stats", timeout=30)  # 30s para stats
         if response.status_code == 200:
             return response.json()
         return None
@@ -70,7 +71,7 @@ def get_stats_from_api() -> dict | None:
 def get_hotels_from_api() -> list:
     """Obtiene lista de hoteles desde la API"""
     try:
-        response = requests.get(f"{API_URL}/hotels", timeout=10)
+        response = requests.get(f"{API_URL}/hotels", timeout=30)  # 30s para lista de hoteles
         if response.status_code == 200:
             return response.json().get("hotels", [])
         return []
@@ -81,7 +82,7 @@ def get_hotels_from_api() -> list:
 def get_nationalities_from_api(limit: int = 50) -> list:
     """Obtiene lista de nacionalidades desde la API"""
     try:
-        response = requests.get(f"{API_URL}/nationalities", params={"limit": limit}, timeout=10)
+        response = requests.get(f"{API_URL}/nationalities", params={"limit": limit}, timeout=30)  # 30s
         if response.status_code == 200:
             return response.json().get("nationalities", [])
         return []
@@ -101,8 +102,8 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             "limit": limit
         }
         
-        # Timeout: 15s para carga inicial, 30s para filtros
-        timeout_value = 15 if limit is None else 30
+        # Timeout generoso para datasets grandes: 60s para todos los casos
+        timeout_value = API_TIMEOUT  # Usa el timeout configurado (60s por defecto)
         
         response = requests.post(
             f"{API_URL}/reviews/filter",
@@ -116,10 +117,11 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
             st.error(f"Error {response.status_code}: {response.json().get('detail', 'Error desconocido')}")
             return None
     except requests.exceptions.Timeout:
-        st.error(f"⏱️ La petición excedió el tiempo límite ({timeout_value}s). La API puede estar sobrecargada.")
+        st.error(f"⏱️ La petición excedió el tiempo límite ({timeout_value}s). El dataset es muy grande o la API está procesando muchos datos. Intenta con filtros más específicos.")
+        st.info("💡 Sugerencia: Filtra por hotel específico o rango de fechas más pequeño.")
         return None
     except requests.exceptions.ConnectionError:
-        st.error("🔌 No se pudo conectar a la API")
+        st.error("🔌 No se pudo conectar a la API. Verifica que esté corriendo.")
         return None
     except Exception as e:
         st.error(f"❌ Error: {e}")
