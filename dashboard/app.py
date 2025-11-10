@@ -134,10 +134,13 @@ def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None,
         st.error(f"❌ Error: {type(e).__name__}: {e}")
         return None
 
-def get_filtered_reviews_with_offset(offset: int = 0, limit: int = 50000, 
+def get_filtered_reviews_with_offset(offset: int = 0, limit: int = 10000, 
                                      hotel=None, sentiment=None, nationality=None,
                                      score_min=0.0, score_max=10.0) -> dict | None:
-    """Obtiene reseñas filtradas con paginación (offset/limit) para carga por lotes"""
+    """Obtiene reseñas filtradas con paginación (offset/limit) para carga por lotes
+    
+    NOTA: limit por defecto 10K para evitar "Response too large" de Cloud Run (límite ~32MB)
+    """
     try:
         filters = {
             "hotel": hotel if hotel != "(Todos)" else None,
@@ -731,8 +734,9 @@ def load_data() -> pd.DataFrame | None:
         return None
     
     try:
-        # ESTRATEGIA: Carga por lotes (batching) para obtener TODOS los datos sin timeout
-        BATCH_SIZE = 50000  # Lotes de 50K reseñas (seguro para Cloud Run 2GB)
+        # ESTRATEGIA: Carga por lotes con tamaño reducido para evitar "Response too large"
+        # Cloud Run tiene límite de ~32MB por respuesta HTTP
+        BATCH_SIZE = 10000  # Lotes de 10K reseñas (seguro para límite de respuesta HTTP)
         all_reviews = []
         batch_num = 0
         

@@ -359,7 +359,9 @@ async def filter_reviews(filters: FilterParams):
     - **score_min**: Puntuación mínima (0-10)
     - **score_max**: Puntuación máxima (0-10)
     - **offset**: Desplazamiento para paginación (por defecto 0)
-    - **limit**: Número máximo de reseñas a retornar (por defecto 50,000 para carga por lotes)
+    - **limit**: Número máximo de reseñas a retornar (por defecto 10,000 para evitar "Response too large")
+    
+    NOTA: Cloud Run tiene límite de respuesta HTTP de ~32MB. Con 10K registros estamos seguros.
     """
     try:
         logger.info(f"Received filter request: offset={filters.offset}, limit={filters.limit}")
@@ -373,7 +375,8 @@ async def filter_reviews(filters: FilterParams):
         logger.info(f"After filters: {len(df_filtered)} reviews")
         
         # Si no se especifica limit, usar límite seguro por defecto
-        DEFAULT_LIMIT = 50000  # Límite seguro para Cloud Run con 2GB RAM
+        # Cloud Run tiene límite de respuesta HTTP de ~32MB
+        DEFAULT_LIMIT = 10000  # Límite seguro para evitar "Response too large"
         if not filters.limit or filters.limit <= 0:
             logger.info(f"No limit specified, applying default: {DEFAULT_LIMIT}")
             # El límite ya se aplica en apply_filters, solo ajustamos el objeto filters
