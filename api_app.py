@@ -66,13 +66,14 @@ class DatasetStats(BaseModel):
     score_distribution: Dict[str, int]
 
 class FilterParams(BaseModel):
-    """Parámetros de filtrado"""
+    """Parámetros de filtrado con soporte para paginación"""
     hotel: Optional[str] = None
     sentiment: Optional[str] = None
     nationality: Optional[str] = None
     score_min: float = 0.0
     score_max: float = 10.0
-    limit: Optional[int] = None
+    offset: int = 0  # Desplazamiento para paginación
+    limit: Optional[int] = None  # Límite de resultados
 
 class ReviewsResponse(BaseModel):
     """Respuesta con reseñas filtradas"""
@@ -202,7 +203,7 @@ def get_cached_data() -> pd.DataFrame:
         raise HTTPException(status_code=500, detail=f"Error cargando dataset: {str(e)}")
 
 def apply_filters(df: pd.DataFrame, filters: FilterParams) -> pd.DataFrame:
-    """Aplica filtros al dataframe"""
+    """Aplica filtros al dataframe con soporte para paginación (offset/limit)"""
     result = df.copy()
     
     if filters.hotel and filters.hotel != "(Todos)":
@@ -218,6 +219,10 @@ def apply_filters(df: pd.DataFrame, filters: FilterParams) -> pd.DataFrame:
         (result["Puntuación del Revisor"] >= filters.score_min) &
         (result["Puntuación del Revisor"] <= filters.score_max)
     ]
+    
+    # Aplicar paginación: offset + limit
+    if filters.offset > 0:
+        result = result.iloc[filters.offset:]
     
     if filters.limit and filters.limit > 0:
         result = result.head(filters.limit)
@@ -337,23 +342,35 @@ async def get_nationalities(limit: int = Query(50, ge=1, le=500, description="Li
 @app.post("/reviews/filter", response_model=ReviewsResponse, tags=["Reviews"])
 async def filter_reviews(filters: FilterParams):
     """
-    Obtener reseñas filtradas según criterios
+    Obtener reseñas filtradas según criterios con soporte para paginación
     
     - **hotel**: Filtrar por nombre de hotel específico
     - **sentiment**: Filtrar por sentimiento (positivo, negativo, neutro)
     - **nationality**: Filtrar por nacionalidad del revisor
     - **score_min**: Puntuación mínima (0-10)
     - **score_max**: Puntuación máxima (0-10)
-    - **limit**: Número máximo de reseñas a retornar
+    - **offset**: Desplazamiento para paginación (por defecto 0)
+    - **limit**: Número máximo de reseñas a retornar (por defecto 50,000 para carga por lotes)
     """
     try:
         df = get_cached_data()
         total_before = len(df)
         
+        # Aplicar filtros (incluye offset y limit internamente)
         df_filtered = apply_filters(df, filters)
         
-        # Convertir a lista de diccionarios
+        # Si no se especifica limit, usar límite seguro por defecto
+        DEFAULT_LIMIT = 50000  # Límite seguro para Cloud Run con 2GB RAM
+        if not filters.limit or filters.limit <= 0:
+            logger.info(f"No limit specified, applying default: {DEFAULT_LIMIT}")
+            # El límite ya se aplica en apply_filters, solo ajustamos el objeto filters
+            if len(df_filtered) > DEFAULT_LIMIT:
+                df_filtered = df_filtered.head(DEFAULT_LIMIT)
+        
+        # Convertir a lista de diccionarios (optimizado para JSON)
         reviews = df_filtered.to_dict('records')
+        
+        logger.info(f"Returning {len(reviews)} reviews (offset={filters.offset}, limit={filters.limit or DEFAULT_LIMIT})")
         
         return ReviewsResponse(
             total_available=total_before,
