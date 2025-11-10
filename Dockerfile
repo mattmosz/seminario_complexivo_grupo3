@@ -37,12 +37,11 @@ RUN useradd -m -u 1000 apiuser && \
 USER apiuser
 
 # Expone el puerto para FastAPI
-EXPOSE $PORT
+EXPOSE 8000
 
-# Healthcheck para monitoreo
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
+# Nota: Cloud Run ignora HEALTHCHECK y usa su propio sistema
+# Si despliegas en Cloud Run, el healthcheck se maneja automáticamente
 
-# Comando para ejecutar la API
-CMD uvicorn api_app:app --host 0.0.0.0 --port ${PORT} --workers 1 
+# Comando para ejecutar la API con exec (importante para Cloud Run)
+CMD exec uvicorn api_app:app --host 0.0.0.0 --port ${PORT} --workers 1 
 
