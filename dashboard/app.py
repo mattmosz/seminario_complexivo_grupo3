@@ -194,6 +194,14 @@ def analyze_review_with_api(review_text: str) -> dict | None:
         st.error(f"❌ Error inesperado: {e}")
         return None
 
+# OPTIMIZACIÓN: Función cacheada para análisis (evita llamadas duplicadas)
+@st.cache_data(ttl=600, show_spinner=False)
+def analyze_cached(review_text: str) -> dict | None:
+    """Versión cacheada del análisis (10 min TTL, máx 5K chars)"""
+    # Limitar texto a 5K caracteres
+    text_to_analyze = review_text[:5000] if len(review_text) > 5000 else review_text
+    return analyze_review_with_api(text_to_analyze)
+
 def get_topics_from_api(filters: dict, n_topics: int = 8) -> dict | None:
     """Obtiene resumen de tópicos desde la API con filtros"""
     try:
@@ -1695,77 +1703,100 @@ with tab_api:
     
     subtab1, subtab2 = st.tabs(["🔍 Análisis Individual", "📊 Resumen de Tópicos"])
     
-    # SUBTAB 1: Análisis de reseña individual
+    # SUBTAB 1: Análisis de reseña individual (OPTIMIZADO)
     with subtab1:
         st.markdown("#### Analiza una reseña del dataset")
-        st.markdown("Selecciona una reseña existente del dataset para analizar su sentimiento y tópicos detectados.")
+        
+        # OPTIMIZACIÓN 1: Limitar reseñas a mostrar (de 100 a 20)
+        MAX_REVIEWS_TO_SHOW = 20
         
         # Filtros para seleccionar reseña
         col_filter1, col_filter2 = st.columns(2)
         
         with col_filter1:
-            # Filtro por hotel
-            hotel_options = ["(Todos)"] + sorted(dff["Nombre del Hotel"].dropna().unique().tolist())
+            # Filtro por hotel (limitado a top 50 para performance)
+            hotel_counts = dff["Nombre del Hotel"].value_counts().head(50)
+            hotel_options = ["(Todos)"] + hotel_counts.index.tolist()
             selected_hotel = st.selectbox(
-                "🏨 Filtrar por Hotel:",
+                "🏨 Filtrar por Hotel (Top 50):",
                 hotel_options,
-                help="Selecciona un hotel para ver sus reseñas"
+                key="api_hotel_select",
+                help="Mostrando solo los 50 hoteles con más reseñas para mejor rendimiento"
             )
         
         with col_filter2:
-            # Filtro por sentimiento (si está disponible)
+            # Filtro por sentimiento
             if use_vader and "Etiqueta de Sentimiento" in dff.columns:
-                sentiment_options = ["(Todos)"] + ["positivo", "negativo", "neutro"]
+                sentiment_options = ["(Todos)", "positivo", "negativo", "neutro"]
                 selected_sentiment = st.selectbox(
                     "😊 Filtrar por Sentimiento:",
                     sentiment_options,
-                    help="Filtra reseñas por su sentimiento"
+                    key="api_sentiment_select"
                 )
             else:
                 selected_sentiment = "(Todos)"
         
-        # Aplicar filtros
-        dff_filtered = dff.copy()
-        
-        if selected_hotel != "(Todos)":
-            dff_filtered = dff_filtered[dff_filtered["Nombre del Hotel"] == selected_hotel]
-        
-        if selected_sentiment != "(Todos)" and use_vader:
-            dff_filtered = dff_filtered[dff_filtered["Etiqueta de Sentimiento"] == selected_sentiment]
-        
-        # Mostrar cantidad de reseñas disponibles
-        st.info(f"📊 Reseñas disponibles con estos filtros: **{len(dff_filtered):,}**")
-        
-        if len(dff_filtered) == 0:
-            st.warning("⚠️ No hay reseñas con estos filtros. Ajusta los criterios de búsqueda.")
-        else:
-            # Crear lista de opciones para el selectbox
-            # Formato: "Hotel - Puntuación - Preview de reseña"
-            review_options = []
-            review_indices = []
+        # OPTIMIZACIÓN 2: Función cacheada para filtrar muestra
+        @st.cache_data(ttl=300)
+        def get_filtered_sample(hotel, sentiment, limit=MAX_REVIEWS_TO_SHOW):
+            """Obtiene muestra filtrada con caché (5 min)"""
+            temp_df = dff.copy()
             
-            for idx, row in dff_filtered.head(100).iterrows():  # Limitar a 100 para performance
-                hotel_name = row["Nombre del Hotel"][:30]
+            if hotel != "(Todos)":
+                temp_df = temp_df[temp_df["Nombre del Hotel"] == hotel]
+            
+            if sentiment != "(Todos)" and use_vader:
+                temp_df = temp_df[temp_df["Etiqueta de Sentimiento"] == sentiment]
+            
+            # Tomar solo las primeras N reseñas
+            return temp_df.head(limit)
+        
+        # Obtener muestra filtrada
+        dff_sample = get_filtered_sample(selected_hotel, selected_sentiment)
+        
+        # Calcular total disponible (sin cargar todo)
+        if selected_hotel == "(Todos)" and selected_sentiment == "(Todos)":
+            total_available = len(dff)
+        else:
+            temp_mask = pd.Series([True] * len(dff))
+            if selected_hotel != "(Todos)":
+                temp_mask &= (dff["Nombre del Hotel"] == selected_hotel)
+            if selected_sentiment != "(Todos)" and use_vader:
+                temp_mask &= (dff["Etiqueta de Sentimiento"] == selected_sentiment)
+            total_available = temp_mask.sum()
+        
+        st.info(f"📊 Total disponible: **{total_available:,}** | Mostrando: **{len(dff_sample)}** (optimizado para rendimiento)")
+        
+        if len(dff_sample) == 0:
+            st.warning("⚠️ No hay reseñas con estos filtros.")
+        else:
+            # OPTIMIZACIÓN 3: Crear opciones de forma más eficiente
+            review_options = []
+            review_data = []
+            
+            for idx, row in dff_sample.iterrows():
+                hotel_name = str(row["Nombre del Hotel"])[:25]
                 score = row["Puntuación del Revisor"]
                 
-                # Obtener preview de la reseña
-                if "review_text" in row and pd.notna(row["review_text"]) and row["review_text"].strip():
-                    preview = row["review_text"][:80].replace("\n", " ")
+                # Preview corto (50 chars máximo)
+                if "review_text" in row and pd.notna(row["review_text"]):
+                    preview = str(row["review_text"])[:50]
                 else:
-                    pos_rev = row.get("Reseña Positiva", "")
-                    neg_rev = row.get("Reseña Negativa", "")
-                    combined = f"{pos_rev} {neg_rev}".strip()
-                    preview = combined[:80].replace("\n", " ")
+                    pos = str(row.get("Reseña Positiva", ""))
+                    neg = str(row.get("Reseña Negativa", ""))
+                    preview = f"{pos} {neg}"[:50]
                 
-                if preview.strip():
+                preview = preview.replace("\n", " ").strip()
+                
+                if preview:
                     option_text = f"{hotel_name}... | ⭐{score} | {preview}..."
                     review_options.append(option_text)
-                    review_indices.append(idx)
+                    review_data.append(row.to_dict())
             
             if len(review_options) == 0:
                 st.warning("⚠️ No se encontraron reseñas con texto válido. Ajusta los filtros.")
             else:
-                # Selector de reseña
+                # Selector de reseña (compacto)
                 st.markdown("---")
                 st.markdown("##### 📝 Selecciona una Reseña")
                 
@@ -1773,43 +1804,44 @@ with tab_api:
                     "Reseña:",
                     range(len(review_options)),
                     format_func=lambda x: review_options[x],
-                    help="Selecciona una reseña para analizar"
+                    help="Selecciona una reseña para analizar",
+                    key="api_review_select"
                 )
                 
-                # Obtener la reseña seleccionada
-                actual_idx = review_indices[selected_review_idx]
-                selected_row = dff_filtered.loc[actual_idx]
+                # Obtener la reseña seleccionada (desde dict pre-cargado)
+                selected_row = review_data[selected_review_idx]
                 
-                # Mostrar detalles de la reseña seleccionada
-                with st.expander("📋 Detalles de la Reseña Seleccionada", expanded=True):
+                # Mostrar detalles de la reseña seleccionada (compacto)
+                with st.expander("📋 Detalles de la Reseña", expanded=False):
                     col_det1, col_det2, col_det3 = st.columns(3)
                     
                     with col_det1:
-                        st.metric("🏨 Hotel", selected_row["Nombre del Hotel"][:30] + "...")
+                        hotel_name = str(selected_row.get("Nombre del Hotel", "N/A"))
+                        st.metric("🏨 Hotel", hotel_name[:30] + ("..." if len(hotel_name) > 30 else ""))
                     
                     with col_det2:
-                        st.metric("⭐ Puntuación", f"{selected_row['Puntuación del Revisor']}/10")
+                        score = selected_row.get("Puntuación del Revisor", 0)
+                        st.metric("⭐ Puntuación", f"{score}/10")
                     
                     with col_det3:
-                        if "Etiqueta de Sentimiento" in selected_row:
-                            st.metric("� Sentimiento", selected_row["Etiqueta de Sentimiento"].capitalize())
+                        sentiment = selected_row.get("Etiqueta de Sentimiento")
+                        if sentiment and pd.notna(sentiment):
+                            st.metric("😊 Sentimiento", str(sentiment).capitalize())
                         else:
                             st.metric("😊 Sentimiento", "N/A")
                     
-                    # Mostrar texto completo de la reseña
-                    st.markdown("**Texto de la Reseña:**")
-                    
-                    if "review_text" in selected_row and pd.notna(selected_row["review_text"]) and selected_row["review_text"].strip():
-                        review_text = selected_row["review_text"]
+                    # Texto completo (limitado a 5K para análisis)
+                    if "review_text" in selected_row and pd.notna(selected_row.get("review_text")) and str(selected_row.get("review_text", "")).strip():
+                        review_text = str(selected_row["review_text"])[:5000]
                     else:
-                        pos_text = selected_row.get("Reseña Positiva", "").strip()
-                        neg_text = selected_row.get("Reseña Negativa", "").strip()
-                        review_text = f"{pos_text}. {neg_text}".strip(". ")
+                        pos_text = str(selected_row.get("Reseña Positiva", "")).strip()
+                        neg_text = str(selected_row.get("Reseña Negativa", "")).strip()
+                        review_text = f"{pos_text}. {neg_text}".strip(". ")[:5000]
                     
                     st.text_area(
-                        "Reseña completa:",
+                        "Reseña:",
                         value=review_text,
-                        height=150,
+                        height=120,
                         disabled=True,
                         label_visibility="collapsed"
                     )
@@ -1825,14 +1857,16 @@ with tab_api:
                     if len(review_text.strip()) < 10:
                         st.warning("⚠️ La reseña seleccionada es demasiado corta para analizar")
                     else:
-                        with st.spinner("🔄 Analizando reseña con la API... Esto puede tardar unos segundos"):
-                            result = analyze_review_with_api(review_text)
+                        with st.spinner("🔄 Analizando reseña con la API..."):
+                            # Usar versión cacheada (máx 5K chars)
+                            result = analyze_cached(review_text)
                         
                         if result:
                             st.success("✅ Análisis completado")
                             
                             # Mostrar comparación con datos originales si están disponibles
-                            if "Etiqueta de Sentimiento" in selected_row and pd.notna(selected_row["Etiqueta de Sentimiento"]):
+                            original_sentiment = selected_row.get("Etiqueta de Sentimiento")
+                            if original_sentiment and pd.notna(original_sentiment):
                                 st.markdown("---")
                                 st.markdown("#### 🔄 Comparación: Dataset vs API")
                                 
@@ -1840,15 +1874,15 @@ with tab_api:
                                 
                                 with col_comp1:
                                     st.markdown("**Sentimiento en Dataset (VADER original):**")
-                                    original_sentiment = selected_row["Etiqueta de Sentimiento"]
-                                    sentiment_class_orig = f"sentiment-{original_sentiment.lower()}"
+                                    sentiment_class_orig = f"sentiment-{str(original_sentiment).lower()}"
                                     st.markdown(
-                                        f'<div class="sentiment-badge {sentiment_class_orig}">{original_sentiment.upper()}</div>',
+                                        f'<div class="sentiment-badge {sentiment_class_orig}">{str(original_sentiment).upper()}</div>',
                                         unsafe_allow_html=True
                                     )
                                     
-                                    if "compound" in selected_row:
-                                        st.metric("Score Compuesto", f"{selected_row['compound']:.3f}")
+                                    compound_score = selected_row.get("compound")
+                                    if compound_score and pd.notna(compound_score):
+                                        st.metric("Score Compuesto", f"{compound_score:.3f}")
                                 
                                 with col_comp2:
                                     st.markdown("**Sentimiento calculado por API:**")
@@ -1942,14 +1976,21 @@ with tab_api:
                             
                             st.markdown("---")
                             
-                            # Tópicos
+                            # Tópicos (mostrar solo top 3 para rendimiento)
                             st.markdown("#### 🎯 Tópicos Detectados (LDA)")
                             
                             if result['topics']:
-                                st.markdown(f"Se detectaron **{len(result['topics'])}** tópicos en esta reseña:")
+                                # Limitar a 3 tópicos para evitar sobrecarga
+                                topics_to_show = result['topics'][:3]
+                                total_topics = len(result['topics'])
                                 
-                                for topic in result['topics']:
-                                    with st.expander(f"🏷️ Tema {topic['topic_id']}", expanded=True):
+                                if total_topics > 3:
+                                    st.markdown(f"Se detectaron **{total_topics}** tópicos. Mostrando los **3 principales:**")
+                                else:
+                                    st.markdown(f"Se detectaron **{total_topics}** tópicos en esta reseña:")
+                                
+                                for topic in topics_to_show:
+                                    with st.expander(f"🏷️ Tema {topic['topic_id']}", expanded=False):
                                         keywords = topic['keywords'].split(", ")
                                         
                                         # Crear badges HTML para palabras clave
