@@ -999,46 +999,33 @@ if not api_available:
     st.error("⚠️ No se pueden aplicar filtros sin conexión a la API")
     st.stop()
 
-# Crear objeto de filtros para enviar a la API
-# IMPORTANTE: limit=None asegura que los filtros obtengan TODOS los datos de la API.
+# Crear objeto de filtros para aplicar localmente
+# CAMBIO: Ahora filtramos localmente el DataFrame completo cargado (512K reseñas)
+# en lugar de llamar a la API cada vez
 current_filters = {
     "hotel": col_hotel if col_hotel != "(Todos)" else None,
     "sentiment": col_sent if use_vader and col_sent != "(Todos)" else None,
     "nationality": col_nat if col_nat != "(Todas)" else None,
     "score_min": score_lo,
-    "score_max": score_hi,
-    "limit": None  # ⚠️ None = SIN LÍMITE: Los filtros SIEMPRE obtienen todos los resultados
+    "score_max": score_hi
 }
 
-# Obtener datos filtrados desde la API
-with st.spinner("🔄 Aplicando filtros..."):
-    filtered_result = get_filtered_reviews_from_api(
-        hotel=current_filters["hotel"],
-        sentiment=current_filters["sentiment"],
-        nationality=current_filters["nationality"],
-        score_min=current_filters["score_min"],
-        score_max=current_filters["score_max"],
-        limit=current_filters["limit"]
-    )
+# Aplicar filtros LOCALMENTE sobre el DataFrame completo
+dff = df.copy()
 
-if filtered_result is None:
-    st.error("Error obteniendo datos filtrados de la API")
-    st.stop()
+if current_filters["hotel"]:
+    dff = dff[dff["Nombre del Hotel"] == current_filters["hotel"]]
 
-# Convertir a DataFrame
-dff = pd.DataFrame(filtered_result.get("reviews", []))
+if current_filters["sentiment"]:
+    dff = dff[dff["Etiqueta de Sentimiento"] == current_filters["sentiment"]]
 
-# Renombrar columnas si vienen del backend con nombres en inglés
-if "Hotel_Name" in dff.columns:
-    dff = dff.rename(columns={
-        "Hotel_Name": "Nombre del Hotel",
-        "Reviewer_Nationality": "Nacionalidad del Revisor",
-        "Positive_Review": "Reseña Positiva",
-        "Negative_Review": "Reseña Negativa",
-        "review_text": "Texto de Reseña",
-        "sentiment_label": "Etiqueta de Sentimiento",
-        "Reviewer_Score": "Puntuación del Revisor"
-    })
+if current_filters["nationality"]:
+    dff = dff[dff["Nacionalidad del Revisor"] == current_filters["nationality"]]
+
+dff = dff[
+    (dff["Puntuación del Revisor"] >= current_filters["score_min"]) &
+    (dff["Puntuación del Revisor"] <= current_filters["score_max"])
+]
 
 if len(dff) == 0:
     st.warning("⚠️ No hay reseñas que coincidan con los filtros aplicados")
