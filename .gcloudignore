@@ -1,0 +1,45 @@
+# Este archivo anula el .gitignore para Cloud Build
+# Indicamos qué archivos NO deben incluirse en el build
+
+# Ignorar entornos virtuales
+venv/
+env/
+ENV/
+.venv/
+
+# Ignorar archivos de Python compilados
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignorar Git
+.git/
+.gitignore
+
+# Ignorar IDE
+.vscode/
+.idea/
+
+# Ignorar dashboard (no necesario para la API)
+dashboard/
+
+# Ignorar documentación
+docs/
+*.md
+!README.md
+
+# Ignorar archivos de configuración local
+.env
+.env.local
+*.log
+
+# Ignorar Streamlit
+.streamlit/
+
+# Ignorar archivos temporales
+*.tmp
+*.bak
+
+# IMPORTANTE: NO ignorar data/ porque la API necesita el CSV procesado
+# Pero sí ignorar el CSV crudo original
+data/Hotel_Reviews.csv

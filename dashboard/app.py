@@ -1216,14 +1216,8 @@ st.markdown("""
 # 8. KPIs Principales - USO DE MÉTRICAS AGREGADAS
 # ======================
 
-# Obtener métricas pre-calculadas desde la API (SIN cargar reseñas completas)
-metrics = get_aggregated_metrics(
-    hotel=selected_hotel,
-    sentiment=selected_sentiment,
-    nationality=selected_nationality,
-    score_min=score_range[0],
-    score_max=score_range[1]
-)
+# Las métricas ya se obtuvieron antes (línea ~1161), usar esas
+# metrics = get_aggregated_metrics(api_filters)  <-- Ya existe arriba
 
 if metrics:
     # Usar datos de métricas agregadas
@@ -1694,11 +1688,11 @@ with tab1:
             # Obtener distribución de sentimientos desde API
             sentiment_dist = get_distribution_data(
                 metric="sentiment",
-                hotel=selected_hotel,
-                sentiment=selected_sentiment,
-                nationality=selected_nationality,
-                score_min=score_range[0],
-                score_max=score_range[1]
+                hotel=col_hotel if col_hotel != "(Todos)" else None,
+                sentiment=col_sent if use_vader and col_sent != "(Todos)" else None,
+                nationality=col_nat if col_nat != "(Todas)" else None,
+                score_min=score_lo,
+                score_max=score_hi
             )
             if sentiment_dist:
                 st.plotly_chart(
@@ -1724,11 +1718,11 @@ with tab1:
     # Gráfico de nacionalidades desde API
     st.plotly_chart(
         fig_nationality_distribution_from_api(
-            hotel=selected_hotel,
-            sentiment=selected_sentiment,
-            nationality=selected_nationality,
-            score_min=score_range[0],
-            score_max=score_range[1]
+            hotel=col_hotel if col_hotel != "(Todos)" else None,
+            sentiment=col_sent if use_vader and col_sent != "(Todos)" else None,
+            nationality=col_nat if col_nat != "(Todas)" else None,
+            score_min=score_lo,
+            score_max=score_hi
         ),
         use_container_width=True
     )

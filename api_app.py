@@ -183,16 +183,24 @@ def get_cached_data() -> pd.DataFrame:
         df = pd.read_csv(DATA_PATH, encoding='utf-8')
         logger.info(f"Dataset cargado: {len(df)} reseñas")
         
-        # Normalizar nombres de columnas
-        df = df.rename(columns={
-            "Hotel_Name": "Nombre del Hotel",
-            "Reviewer_Nationality": "Nacionalidad del Revisor",
-            "Positive_Review": "Reseña Positiva",
-            "Negative_Review": "Reseña Negativa",
-            "review_text": "Texto de Reseña",
-            "sentiment_label": "Etiqueta de Sentimiento",
-            "Reviewer_Score": "Puntuación del Revisor"
-        })
+        # Normalizar nombres de columnas (solo las que existen)
+        rename_map = {}
+        if "Hotel_Name" in df.columns:
+            rename_map["Hotel_Name"] = "Nombre del Hotel"
+        if "Reviewer_Nationality" in df.columns:
+            rename_map["Reviewer_Nationality"] = "Nacionalidad del Revisor"
+        if "Positive_Review" in df.columns:
+            rename_map["Positive_Review"] = "Reseña Positiva"
+        if "Negative_Review" in df.columns:
+            rename_map["Negative_Review"] = "Reseña Negativa"
+        if "review_text" in df.columns:
+            rename_map["review_text"] = "Texto de Reseña"
+        if "sentiment_label" in df.columns:
+            rename_map["sentiment_label"] = "Etiqueta de Sentimiento"
+        if "Reviewer_Score" in df.columns:
+            rename_map["Reviewer_Score"] = "Puntuación del Revisor"
+        
+        df = df.rename(columns=rename_map)
         
         # Limpiar datos
         df["Puntuación del Revisor"] = pd.to_numeric(df["Puntuación del Revisor"], errors="coerce")
@@ -213,7 +221,23 @@ def get_cached_data() -> pd.DataFrame:
             ).str.strip()
         
         df["Texto de Reseña"] = df["Texto de Reseña"].fillna("")
-        df["Etiqueta de Sentimiento"] = df["Etiqueta de Sentimiento"].fillna("neutro")
+        
+        # Calcular sentiment si no existe la columna
+        if "Etiqueta de Sentimiento" not in df.columns:
+            logger.info("Calculando sentimiento para todas las reseñas (esto puede tardar)...")
+            def calc_sentiment_label(score):
+                """Calcula sentiment basado en la puntuación"""
+                if score >= 7.5:
+                    return "positivo"
+                elif score <= 5.0:
+                    return "negativo"
+                else:
+                    return "neutro"
+            
+            df["Etiqueta de Sentimiento"] = df["Puntuación del Revisor"].apply(calc_sentiment_label)
+            logger.info("Sentimiento calculado basado en puntuaciones")
+        else:
+            df["Etiqueta de Sentimiento"] = df["Etiqueta de Sentimiento"].fillna("neutro")
         
         median_score = df["Puntuación del Revisor"].median()
         df["Puntuación del Revisor"] = df["Puntuación del Revisor"].fillna(median_score)
@@ -726,21 +750,21 @@ async def get_aggregated_metrics(filters: FilterParams):
             )
         
         # Distribución de sentimientos
-        sentiment_counts = filtered_df["sentiment_label"].value_counts().to_dict()
+        sentiment_counts = filtered_df["Etiqueta de Sentimiento"].value_counts().to_dict()
         total = len(filtered_df)
         sentiment_percentages = {k: round((v/total)*100, 2) for k, v in sentiment_counts.items()}
         
         # Distribución de puntuaciones
-        score_distribution = filtered_df["Reviewer_Score"].value_counts().sort_index().to_dict()
+        score_distribution = filtered_df["Puntuación del Revisor"].value_counts().sort_index().to_dict()
         score_distribution = {str(k): int(v) for k, v in score_distribution.items()}
         
         # Promedios
-        avg_score = float(filtered_df["Reviewer_Score"].mean())
-        median_score = float(filtered_df["Reviewer_Score"].median())
+        avg_score = float(filtered_df["Puntuación del Revisor"].mean())
+        median_score = float(filtered_df["Puntuación del Revisor"].median())
         
         # Top 10 hoteles
-        top_hotels_data = filtered_df.groupby("Hotel_Name").agg({
-            "Reviewer_Score": ["count", "mean"]
+        top_hotels_data = filtered_df.groupby("Nombre del Hotel").agg({
+            "Puntuación del Revisor": ["count", "mean"]
         }).reset_index()
         top_hotels_data.columns = ["hotel", "review_count", "avg_score"]
         top_hotels_data = top_hotels_data.sort_values("review_count", ascending=False).head(10)
@@ -750,7 +774,7 @@ async def get_aggregated_metrics(filters: FilterParams):
             hotel["avg_score"] = round(float(hotel["avg_score"]), 2)
         
         # Top 10 nacionalidades
-        top_nationalities_data = filtered_df["Reviewer_Nationality"].value_counts().head(10)
+        top_nationalities_data = filtered_df["Nacionalidad del Revisor"].value_counts().head(10)
         top_nationalities = [
             {"nationality": str(nat), "review_count": int(count)}
             for nat, count in top_nationalities_data.items()
@@ -802,13 +826,13 @@ async def get_distribution(
         total = len(filtered_df)
         
         if metric == "sentiment":
-            dist = filtered_df["sentiment_label"].value_counts()
+            dist = filtered_df["Etiqueta de Sentimiento"].value_counts()
         elif metric == "score":
-            dist = filtered_df["Reviewer_Score"].value_counts().sort_index()
+            dist = filtered_df["Puntuación del Revisor"].value_counts().sort_index()
         elif metric == "hotel":
-            dist = filtered_df["Hotel_Name"].value_counts().head(20)
+            dist = filtered_df["Nombre del Hotel"].value_counts().head(20)
         elif metric == "nationality":
-            dist = filtered_df["Reviewer_Nationality"].value_counts().head(20)
+            dist = filtered_df["Nacionalidad del Revisor"].value_counts().head(20)
         else:
             raise HTTPException(status_code=400, detail=f"Invalid metric: {metric}")
         
