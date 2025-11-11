@@ -820,29 +820,7 @@ def get_aggregated_metrics(filters: dict) -> dict | None:
     except Exception as e:
         st.error(f"Error conectando con API: {e}")
         return None
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_distribution_data(filters: dict, metric: str) -> dict | None:
-    """
-    Obtiene distribución de una métrica específica desde la API.
-    metrics: 'sentiment', 'score', 'hotel', 'nationality'
-    TTL: 5 minutos
-    """
-    try:
-        response = requests.post(
-            f"{API_URL}/metrics/distribution?metric={metric}",
-            json=filters,
-            timeout=API_TIMEOUT
-        )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Error obteniendo distribución: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Error conectando con API: {e}")
-        return None
-
+# ELIMINADA: get_distribution_data() antigua - usar la nueva versión en línea 131
 @st.cache_data(ttl=600, show_spinner=False)
 def get_sample_reviews(filters: dict, limit: int = 100) -> dict | None:
     """
@@ -1015,7 +993,7 @@ if not api_available:
     # Botón para reintentar la conexión
     col1, col2 = st.columns([3, 1])
     with col1:
-        if st.button("🔄 Reintentar Conexión", type="primary", use_container_width=True):
+        if st.button("🔄 Reintentar Conexión", type="primary", width='stretch'):
             # Limpiar cache y estado
             st.cache_data.clear()
             
@@ -1039,7 +1017,7 @@ if not api_available:
                 st.error("❌ API sigue sin responder. Espera 1 minuto más si usas Render.")
     
     with col2:
-        if st.button("ℹ️ Info", use_container_width=True):
+        if st.button("ℹ️ Info", width='stretch'):
             st.info("""
             **Render Free Tier:**
             - Servicios inactivos se duermen
@@ -1682,7 +1660,7 @@ with tab1:
     col1, col2 = st.columns([2, 1])
     with col1:
         # Nota: fig_area_por_categoria requiere DataFrame, mantenemos carga limitada para esta visualización
-        st.plotly_chart(fig_area_por_categoria(dff, use_vader), use_container_width=True)
+        st.plotly_chart(fig_area_por_categoria(dff, use_vader), width='stretch')
     with col2:
         if use_vader and metrics:
             # Obtener distribución de sentimientos desde API
@@ -1697,7 +1675,7 @@ with tab1:
             if sentiment_dist:
                 st.plotly_chart(
                     fig_donut_from_api_distribution(sentiment_dist, "Distribución de Sentimientos"),
-                    use_container_width=True
+                    width='stretch'
                 )
             else:
                 st.error("No se pudo obtener la distribución de sentimientos")
@@ -1707,13 +1685,13 @@ with tab1:
     col3, col4 = st.columns([2, 1])
     with col3:
         # Trend requiere DataFrame temporal
-        st.plotly_chart(fig_trend(dff), use_container_width=True)
+        st.plotly_chart(fig_trend(dff), width='stretch')
     with col4:
         # Top hoteles desde métricas agregadas
         if metrics and top_hotels_from_metrics:
-            st.plotly_chart(fig_top_hoteles_from_metrics(top_hotels_from_metrics), use_container_width=True)
+            st.plotly_chart(fig_top_hoteles_from_metrics(top_hotels_from_metrics), width='stretch')
         else:
-            st.plotly_chart(fig_top_hoteles(dff), use_container_width=True)
+            st.plotly_chart(fig_top_hoteles(dff), width='stretch')
     
     # Gráfico de nacionalidades desde API
     st.plotly_chart(
@@ -1724,12 +1702,12 @@ with tab1:
             score_min=score_lo,
             score_max=score_hi
         ),
-        use_container_width=True
+        width='stretch'
     )
 
 # TAB 2: Geografía
 with tab2:
-    st.plotly_chart(fig_map(dff, use_vader), use_container_width=True)
+    st.plotly_chart(fig_map(dff, use_vader), width='stretch')
     
     col_info1, col_info2, col_info3 = st.columns(3)
     with col_info1:
@@ -1772,7 +1750,7 @@ if use_vader:
             with st.spinner("Generando nube de palabras positivas..."):
                 wc_img = wc_image_from_api(filters_pos, "RdPu", sample_size=sample_size_wc)
                 if wc_img:
-                    st.image(wc_img, use_container_width=True)
+                    st.image(wc_img, width='stretch')
                 else:
                     st.warning("No hay suficientes reseñas positivas para generar la nube de palabras.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -1783,7 +1761,7 @@ if use_vader:
             with st.spinner("Generando nube de palabras negativas..."):
                 wc_img = wc_image_from_api(filters_neg, "Blues", sample_size=sample_size_wc)
                 if wc_img:
-                    st.image(wc_img, use_container_width=True)
+                    st.image(wc_img, width='stretch')
                 else:
                     st.warning("No hay suficientes reseñas negativas para generar la nube de palabras.")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -1826,7 +1804,7 @@ with tab_datos:
         
         st.dataframe(
             display_df,
-            use_container_width=True,
+            width='stretch',
             height=500
         )
         
@@ -1843,7 +1821,7 @@ with tab_datos:
             data=dff.to_csv(index=False).encode("utf-8"),
             file_name=f"hotel_reviews_filtered_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            use_container_width=True
+            width='stretch'
         )
     with col_btn2:
         st.download_button(
@@ -1851,7 +1829,7 @@ with tab_datos:
             data=df.to_csv(index=False).encode("utf-8"),
             file_name=f"hotel_reviews_complete_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            use_container_width=True
+            width='stretch'
         )
 
 # TAB 5: Estadísticas Avanzadas
@@ -1906,7 +1884,7 @@ with tab_stats:
         height=400,
         bargap=0.1
     )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, width='stretch')
     
     st.markdown("---")
     
@@ -1924,7 +1902,7 @@ with tab_stats:
         
         st.dataframe(
             hotel_stats,
-            use_container_width=True,
+            width='stretch',
             height=400
         )
     
@@ -2012,7 +1990,7 @@ with tab_api:
             st.caption(f"Intenta iniciar la API: `python api_app.py`")
     
     with col_status2:
-        if st.button("🔄 Verificar API", use_container_width=True):
+        if st.button("🔄 Verificar API", width='stretch'):
             st.cache_data.clear()
             st.rerun()
     
@@ -2190,7 +2168,7 @@ with tab_api:
                 col_btn1, col_btn2 = st.columns([1, 3])
                 
                 with col_btn1:
-                    analyze_btn = st.button("🚀 Analizar con API", type="primary", use_container_width=True)
+                    analyze_btn = st.button("🚀 Analizar con API", type="primary", width='stretch')
         
                 if analyze_btn:
                     if len(review_text.strip()) < 10:
@@ -2311,7 +2289,7 @@ with tab_api:
                                 template="plotly_white"
                             )
                             
-                            st.plotly_chart(fig_sentiment, use_container_width=True)
+                            st.plotly_chart(fig_sentiment, width='stretch')
                             
                             st.markdown("---")
                             
@@ -2350,7 +2328,7 @@ with tab_api:
                                 data=result_json,
                                 file_name=f"analisis_resena_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
                                 mime="application/json",
-                                use_container_width=True
+                                width='stretch'
                             )
     
     # SUBTAB 2: Resumen de tópicos agregados
@@ -2379,7 +2357,7 @@ with tab_api:
         
         col_btn_sum1, col_btn_sum2 = st.columns([1, 3])
         with col_btn_sum1:
-            generate_summary = st.button("📈 Generar Resumen", type="primary", use_container_width=True)
+            generate_summary = st.button("📈 Generar Resumen", type="primary", width='stretch')
         
         if generate_summary:
             # Preparar filtros para la API
@@ -2489,7 +2467,7 @@ with tab_api:
                     })
                 
                 df_comparison = pd.DataFrame(comparison_data)
-                st.dataframe(df_comparison, use_container_width=True, hide_index=True)
+                st.dataframe(df_comparison, width='stretch', hide_index=True)
                 
                 # Botón para descargar
                 st.markdown("---")
@@ -2499,7 +2477,7 @@ with tab_api:
                     data=topics_json,
                     file_name=f"resumen_topicos_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
                     mime="application/json",
-                    use_container_width=True
+                    width='stretch'
                 )
         else:
             st.info("👆 Configura los parámetros y haz clic en 'Generar Resumen' para obtener el análisis de tópicos.")
