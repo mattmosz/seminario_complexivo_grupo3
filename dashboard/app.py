@@ -1398,7 +1398,7 @@ def fig_map(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
         m = m.sample(500, random_state=42)
     
     if vader_enabled:
-        fig = px.scatter_mapbox(
+        fig = px.scatter_map(
             m, lat="lat", lon="lng",
             color="Etiqueta de Sentimiento",
             color_discrete_map=PALETTE,
@@ -1408,7 +1408,7 @@ def fig_map(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
             height=450
         )
     else:
-        fig = px.scatter_mapbox(
+        fig = px.scatter_map(
             m, lat="lat", lon="lng",
             hover_name="Nombre del Hotel",
             hover_data={"Puntuación del Revisor": True, "lat": False, "lng": False},
@@ -1418,7 +1418,7 @@ def fig_map(data: pd.DataFrame, vader_enabled: bool) -> go.Figure:
         )
     
     fig.update_layout(
-        mapbox_style="open-street-map",
+        map_style="open-street-map",
         template=PLOTLY_TEMPLATE,
         margin=dict(l=0, r=0, t=30, b=0),
         title="Distribución Geográfica de Reseñas",
