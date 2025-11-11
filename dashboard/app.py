@@ -95,6 +95,69 @@ def get_nationalities_from_api(limit: int = 50) -> list:
     except:
         return []
 
+@st.cache_data(ttl=300)
+def get_aggregated_metrics(hotel=None, sentiment=None, nationality=None, 
+                          score_min=0.0, score_max=10.0) -> dict | None:
+    """
+    Obtiene métricas agregadas pre-calculadas desde la API.
+    Retorna distribuciones, promedios y rankings SIN cargar reseñas individuales.
+    Perfecto para KPIs y visualizaciones sin consumir memoria.
+    """
+    try:
+        filters = {
+            "hotel": hotel if hotel != "(Todos)" else None,
+            "sentiment": sentiment if sentiment != "(Todos)" else None,
+            "nationality": nationality if nationality != "(Todas)" else None,
+            "score_min": score_min,
+            "score_max": score_max
+        }
+        
+        response = requests.post(
+            f"{API_URL}/metrics/aggregated",
+            json=filters,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error en /metrics/aggregated: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error obteniendo métricas agregadas: {e}")
+        return None
+
+@st.cache_data(ttl=300)
+def get_distribution_data(metric: str, hotel=None, sentiment=None, nationality=None,
+                         score_min=0.0, score_max=10.0) -> dict | None:
+    """
+    Obtiene distribución de un metric específico (sentiment, score, hotel, nationality).
+    Retorna labels, values y percentages listos para gráficos.
+    """
+    try:
+        filters = {
+            "hotel": hotel if hotel != "(Todos)" else None,
+            "sentiment": sentiment if sentiment != "(Todos)" else None,
+            "nationality": nationality if nationality != "(Todas)" else None,
+            "score_min": score_min,
+            "score_max": score_max
+        }
+        
+        response = requests.post(
+            f"{API_URL}/metrics/distribution?metric={metric}",
+            json=filters,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error en /metrics/distribution: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error obteniendo distribución: {e}")
+        return None
+
 def get_filtered_reviews_from_api(hotel=None, sentiment=None, nationality=None, 
                                   score_min=0.0, score_max=10.0, limit=None) -> dict | None:
     """Obtiene reseñas filtradas desde la API (modo simple sin debug)"""
@@ -1150,12 +1213,44 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================
-# 8. KPIs Principales (HÍBRIDO: API + legacy)
+# 8. KPIs Principales - USO DE MÉTRICAS AGREGADAS
 # ======================
 
-# Usar métricas de la API (más eficientes y precisas)
-filtered_reviews = total_filtered
-avg_score = avg_score_api
+# Obtener métricas pre-calculadas desde la API (SIN cargar reseñas completas)
+metrics = get_aggregated_metrics(
+    hotel=selected_hotel,
+    sentiment=selected_sentiment,
+    nationality=selected_nationality,
+    score_min=score_range[0],
+    score_max=score_range[1]
+)
+
+if metrics:
+    # Usar datos de métricas agregadas
+    filtered_reviews = metrics.get("total_reviews", 0)
+    avg_score = metrics.get("average_score", 0.0)
+    
+    # Distribución de sentimientos
+    sentiment_dist = metrics.get("sentiment_distribution", {})
+    sentiment_pcts = metrics.get("sentiment_percentages", {})
+    
+    pos_pct = sentiment_pcts.get("positivo", 0.0)
+    neg_pct = sentiment_pcts.get("negativo", 0.0)
+    neu_pct = sentiment_pcts.get("neutro", 0.0)
+    
+    # Top hoteles
+    top_hotels_from_metrics = metrics.get("top_hotels", [])
+    unique_hotels = len(top_hotels_from_metrics) if len(top_hotels_from_metrics) < 10 else "10+"
+else:
+    # Fallback a valores por defecto
+    st.error("⚠️ No se pudieron obtener las métricas agregadas de la API")
+    filtered_reviews = 0
+    avg_score = 0.0
+    pos_pct = 0.0
+    neg_pct = 0.0
+    neu_pct = 0.0
+    unique_hotels = "0"
+    top_hotels_from_metrics = []
 
 # Obtener total del dataset
 if 'total_dataset_reviews' not in st.session_state:
@@ -1163,16 +1258,6 @@ if 'total_dataset_reviews' not in st.session_state:
     st.session_state.total_dataset_reviews = stats.get("total_reviews", 0) if stats else 0
 
 total_dataset_reviews = st.session_state.total_dataset_reviews
-
-if use_vader:
-    pos_pct = sentiment_percentages.get("positivo", 0.0)
-    neg_pct = sentiment_percentages.get("negativo", 0.0)
-else:
-    pos_pct = 0.0
-    neg_pct = 0.0
-
-# Usar top_hotels de la API
-unique_hotels = len(top_hotels_api) if len(top_hotels_api) < 10 else "10+"
 
 st.markdown(f"""
 <div class="kpi-container">
@@ -1423,6 +1508,126 @@ def fig_nationality_distribution(data: pd.DataFrame) -> go.Figure:
     )
     return fig
 
+# ======================
+# NUEVAS FUNCIONES PARA DISTRIBUCIONES DESDE API
+# ======================
+
+def fig_donut_from_api_distribution(distribution: dict, title: str) -> go.Figure:
+    """Genera gráfico donut desde distribución de API."""
+    if not distribution or not distribution.get("labels"):
+        return go.Figure()
+    
+    labels = distribution["labels"]
+    values = distribution["values"]
+    percentages = distribution["percentages"]
+    
+    # Colores según sentimiento
+    colors = []
+    for label in labels:
+        if label.lower() in ["positivo", "positive"]:
+            colors.append(PALETTE["positivo"])
+        elif label.lower() in ["negativo", "negative"]:
+            colors.append(PALETTE["negativo"])
+        elif label.lower() in ["neutro", "neutral"]:
+            colors.append(PALETTE["neutro"])
+        else:
+            colors.append("#95A5A6")
+    
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.4,
+        marker=dict(colors=colors, line=dict(color="#FFFFFF", width=2)),
+        textinfo="label+percent",
+        textfont=dict(size=12, color="#FFF", family="Arial"),
+        hovertemplate="<b>%{label}</b><br>%{value:,} reseñas<br>%{percent}<extra></extra>"
+    )])
+    
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        title=title,
+        title_font=dict(size=14, color="#1E3A5F", family="Arial Black"),
+        margin=dict(l=20, r=20, t=50, b=20),
+        height=300,
+        showlegend=False
+    )
+    return fig
+
+def fig_top_hoteles_from_metrics(top_hotels: list) -> go.Figure:
+    """Top 10 hoteles desde métricas agregadas de API."""
+    if not top_hotels:
+        return go.Figure()
+    
+    # Extraer datos
+    hotels = [h["hotel"] for h in top_hotels]
+    counts = [h["review_count"] for h in top_hotels]
+    avg_scores = [h["avg_score"] for h in top_hotels]
+    
+    fig = go.Figure(data=[go.Bar(
+        y=hotels[::-1],  # Invertir para mostrar el mayor arriba
+        x=counts[::-1],
+        orientation="h",
+        marker=dict(
+            color=counts[::-1],
+            colorscale=[[0, PALETTE["positivo"]], [1, PALETTE["negativo"]]],
+            showscale=False
+        ),
+        text=[f"{c:,}" for c in counts[::-1]],
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>Reseñas: %{x:,}<extra></extra>"
+    )])
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        title="Top 10 Hoteles por Volumen de Reseñas",
+        title_font=dict(size=14, color="#1E3A5F", family="Arial Black"),
+        margin=dict(l=150, r=20, t=50, b=20),
+        height=350,
+        xaxis_title="",
+        yaxis_title=""
+    )
+    return fig
+
+def fig_nationality_distribution_from_api(hotel=None, sentiment=None, nationality=None,
+                                          score_min=0.0, score_max=10.0) -> go.Figure:
+    """Distribución de nacionalidades desde API."""
+    distribution = get_distribution_data(
+        metric="nationality",
+        hotel=hotel,
+        sentiment=sentiment,
+        nationality=nationality,
+        score_min=score_min,
+        score_max=score_max
+    )
+    
+    if not distribution or not distribution.get("labels"):
+        return go.Figure()
+    
+    labels = distribution["labels"][:15]  # Top 15
+    values = distribution["values"][:15]
+    
+    fig = go.Figure(data=[go.Bar(
+        x=labels,
+        y=values,
+        marker=dict(
+            color=values,
+            colorscale=[[0, PALETTE["positivo"]], [1, PALETTE["negativo"]]],
+            showscale=False
+        ),
+        text=values,
+        textposition="outside"
+    )])
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        title="Top 15 Nacionalidades de Revisores",
+        title_font=dict(size=14, color="#1E3A5F", family="Arial Black"),
+        margin=dict(l=20, r=20, t=50, b=50),
+        height=350,
+        xaxis_title="",
+        yaxis_title="Número de Reseñas",
+        xaxis_tickangle=-45
+    )
+    return fig
+
 
 def wc_image_from_api(filters: dict, colormap: str, sample_size: int = 3000) -> BytesIO:
     """Genera imagen de nube de palabras usando datos de la API."""
@@ -1478,26 +1683,55 @@ else:
         "🔌 Análisis con API"
     ])
 
-# TAB 1: Análisis General
+# TAB 1: Análisis General (usando métricas de API)
 with tab1:
     col1, col2 = st.columns([2, 1])
     with col1:
+        # Nota: fig_area_por_categoria requiere DataFrame, mantenemos carga limitada para esta visualización
         st.plotly_chart(fig_area_por_categoria(dff, use_vader), use_container_width=True)
     with col2:
-        if use_vader:
-            st.plotly_chart(fig_donut(dff["Etiqueta de Sentimiento"], "Distribución de Sentimientos"), 
-                          use_container_width=True)
+        if use_vader and metrics:
+            # Obtener distribución de sentimientos desde API
+            sentiment_dist = get_distribution_data(
+                metric="sentiment",
+                hotel=selected_hotel,
+                sentiment=selected_sentiment,
+                nationality=selected_nationality,
+                score_min=score_range[0],
+                score_max=score_range[1]
+            )
+            if sentiment_dist:
+                st.plotly_chart(
+                    fig_donut_from_api_distribution(sentiment_dist, "Distribución de Sentimientos"),
+                    use_container_width=True
+                )
+            else:
+                st.error("No se pudo obtener la distribución de sentimientos")
         else:
             st.info("💡 El análisis de sentimientos está deshabilitado. Actívalo en la barra lateral para ver la distribución.")
     
     col3, col4 = st.columns([2, 1])
     with col3:
+        # Trend requiere DataFrame temporal
         st.plotly_chart(fig_trend(dff), use_container_width=True)
     with col4:
-        st.plotly_chart(fig_top_hoteles(dff), use_container_width=True)
+        # Top hoteles desde métricas agregadas
+        if metrics and top_hotels_from_metrics:
+            st.plotly_chart(fig_top_hoteles_from_metrics(top_hotels_from_metrics), use_container_width=True)
+        else:
+            st.plotly_chart(fig_top_hoteles(dff), use_container_width=True)
     
-    # Gráfico adicional de nacionalidades
-    st.plotly_chart(fig_nationality_distribution(dff), use_container_width=True)
+    # Gráfico de nacionalidades desde API
+    st.plotly_chart(
+        fig_nationality_distribution_from_api(
+            hotel=selected_hotel,
+            sentiment=selected_sentiment,
+            nationality=selected_nationality,
+            score_min=score_range[0],
+            score_max=score_range[1]
+        ),
+        use_container_width=True
+    )
 
 # TAB 2: Geografía
 with tab2:
