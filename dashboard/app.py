@@ -1780,54 +1780,153 @@ tab_datos = tab4 if use_vader else tab3
 with tab_datos:
     st.markdown("### Muestra de Reseñas Filtradas")
     
-    # Selector de columnas a mostrar
+    # OPTIMIZACIÓN: Limitar muestra máxima y agregar paginación
+    ROWS_PER_PAGE = 100  # Reducido de 1000 a 100 para mejor rendimiento
+    MAX_ROWS_TO_PROCESS = 5000  # Limitar el máximo de filas a procesar
+    
+    total_filtered = len(dff)
+    
+    if total_filtered > MAX_ROWS_TO_PROCESS:
+        st.warning(f"⚠️ Se encontraron {total_filtered:,} reseñas. Por rendimiento, se mostrarán solo las primeras {MAX_ROWS_TO_PROCESS:,}.")
+        dff_limited = dff.head(MAX_ROWS_TO_PROCESS)
+    else:
+        dff_limited = dff
+    
+    # Selector de columnas a mostrar (columnas por defecto más ligeras)
     available_cols = ["Nombre del Hotel", "Nacionalidad del Revisor", "Puntuación del Revisor"]
     if use_vader:
         available_cols.append("Etiqueta de Sentimiento")
-    available_cols.extend(["Reseña Positiva", "Reseña Negativa", "Texto de Reseña"])
+    
+    # Agregar columnas de texto como opcionales
+    text_cols = []
+    if "Reseña Positiva" in dff_limited.columns:
+        text_cols.append("Reseña Positiva")
+    if "Reseña Negativa" in dff_limited.columns:
+        text_cols.append("Reseña Negativa")
+    if "Texto de Reseña" in dff_limited.columns:
+        text_cols.append("Texto de Reseña")
+    
+    available_cols.extend(text_cols)
+    
+    # Por defecto, NO incluir columnas de texto (más ligero)
+    default_cols = ["Nombre del Hotel", "Nacionalidad del Revisor", "Puntuación del Revisor"]
+    if use_vader:
+        default_cols.append("Etiqueta de Sentimiento")
     
     selected_cols = st.multiselect(
         "Selecciona las columnas a mostrar:",
         available_cols,
-        default=available_cols[:5]
+        default=default_cols,
+        help="💡 Consejo: No selecciones columnas de texto para mejor rendimiento"
     )
     
     if selected_cols:
-        display_df = dff[selected_cols].head(1000).copy()
+        # Calcular número de páginas
+        total_rows = len(dff_limited)
+        total_pages = (total_rows - 1) // ROWS_PER_PAGE + 1
         
-        # Truncar texto largo para mejor visualización
-        for col in ["Reseña Positiva", "Reseña Negativa", "Texto de Reseña"]:
-            if col in display_df.columns:
-                display_df[col] = display_df[col].str[:200] + "..."
+        # Control de paginación
+        col_pag1, col_pag2, col_pag3 = st.columns([1, 2, 1])
         
+        with col_pag2:
+            if total_pages > 1:
+                # Inicializar página en session_state si no existe
+                if 'current_page' not in st.session_state:
+                    st.session_state.current_page = 1
+                
+                page = st.number_input(
+                    f"Página (de {total_pages}):",
+                    min_value=1,
+                    max_value=total_pages,
+                    value=st.session_state.current_page,
+                    step=1,
+                    key="page_selector"
+                )
+                st.session_state.current_page = page
+            else:
+                page = 1
+        
+        # Calcular índices de inicio y fin
+        start_idx = (page - 1) * ROWS_PER_PAGE
+        end_idx = min(start_idx + ROWS_PER_PAGE, total_rows)
+        
+        # Obtener slice de datos
+        display_df = dff_limited[selected_cols].iloc[start_idx:end_idx].copy()
+        
+        # Truncar texto largo solo si se seleccionaron columnas de texto
+        has_text_cols = any(col in text_cols for col in selected_cols)
+        if has_text_cols:
+            for col in text_cols:
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].astype(str).str[:150] + "..."
+        
+        # Mostrar dataframe con altura fija
         st.dataframe(
             display_df,
             width='stretch',
-            height=500
+            height=400
         )
         
-        st.caption(f"Mostrando {min(1000, len(dff))} de {len(dff)} reseñas filtradas")
+        # Información de paginación
+        st.caption(f"📄 Mostrando filas {start_idx + 1:,} a {end_idx:,} de {total_rows:,} ({total_filtered:,} en total)")
+        
+        # Botones de navegación rápida
+        if total_pages > 1:
+            col_nav1, col_nav2, col_nav3, col_nav4, col_nav5 = st.columns(5)
+            
+            with col_nav1:
+                if st.button("⏮️ Primera", disabled=(page == 1), key="first_page"):
+                    st.session_state.current_page = 1
+                    st.rerun()
+            
+            with col_nav2:
+                if st.button("◀️ Anterior", disabled=(page == 1), key="prev_page"):
+                    st.session_state.current_page = page - 1
+                    st.rerun()
+            
+            with col_nav4:
+                if st.button("▶️ Siguiente", disabled=(page == total_pages), key="next_page"):
+                    st.session_state.current_page = page + 1
+                    st.rerun()
+            
+            with col_nav5:
+                if st.button("⏭️ Última", disabled=(page == total_pages), key="last_page"):
+                    st.session_state.current_page = total_pages
+                    st.rerun()
     else:
         st.warning("⚠️ Selecciona al menos una columna para mostrar.")
     
     st.markdown("---")
     
+    # Botones de descarga (ahora con advertencia para dataset completo)
     col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 3])
     with col_btn1:
+        # Descargar solo las filas filtradas (limitado a 10K para evitar crashes)
+        download_limit = min(len(dff), 10000)
+        if len(dff) > download_limit:
+            st.info(f"💡 Descargando solo las primeras {download_limit:,} filas filtradas")
+        
         st.download_button(
-            "Descargar CSV Filtrado",
-            data=dff.to_csv(index=False).encode("utf-8"),
+            "📥 Descargar Filtrado",
+            data=dff.head(download_limit).to_csv(index=False).encode("utf-8"),
             file_name=f"hotel_reviews_filtered_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            width='stretch'
+            width='stretch',
+            help=f"Descarga hasta {download_limit:,} filas filtradas"
         )
     with col_btn2:
+        # Advertencia para dataset completo
+        if len(df) > 50000:
+            st.warning("⚠️ Dataset muy grande")
+        
         st.download_button(
-            "Descargar CSV Completo",
-            data=df.to_csv(index=False).encode("utf-8"),
+            "📥 Descargar Todo",
+            data=df.head(50000).to_csv(index=False).encode("utf-8"),
             file_name=f"hotel_reviews_complete_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            width='stretch'
+            width='stretch',
+            help="Descarga hasta 50K filas del dataset completo",
+            disabled=(len(df) > 100000)  # Deshabilitar si es muy grande
         )
 
 # TAB 5: Estadísticas Avanzadas
