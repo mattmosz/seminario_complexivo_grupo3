@@ -725,6 +725,11 @@ st.markdown("""
         margin: 1rem 0;
         border-left: 5px solid #E91E8C;
     }
+    /* Bajar las alertas (success/info/error) */
+    .stAlert {
+        margin-top: 20px !important;
+}
+
     
     /* Responsive */
     @media (max-width: 1400px) {
