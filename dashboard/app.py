@@ -22,8 +22,10 @@ st.set_page_config(
 )
 
 # Mostrar algo INMEDIATAMENTE para que Streamlit Cloud sepa que estamos vivos
-st.title("📊 Cargando Dashboard...")
-st.caption("Inicializando componentes...")
+loading_placeholder = st.empty()
+with loading_placeholder:
+   st.title("📊 Cargando Dashboard...")
+   st.caption("Inicializando componentes...")
 
 # ---------- Configuración de API (DESPUÉS de st.set_page_config) ----------
 try:
@@ -936,8 +938,8 @@ def load_data() -> pd.DataFrame | None:
 # --- Inicialización INSTANTÁNEA del dashboard ---
 # ESTRATEGIA: Dashboard inicia inmediatamente, sin esperar API
 
-# Limpiar el título temporal
-st.empty()
+# Limpiar el título temporal (elimina el "Cargando Dashboard...")
+loading_placeholder.empty()
 
 # Inicializar session_state PRIMERO (antes de cualquier consulta)
 if 'data_loaded' not in st.session_state:
