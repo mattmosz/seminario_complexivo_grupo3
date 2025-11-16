@@ -1,4 +1,4 @@
-# 🏨 Análisis de Sentimientos - Reseñas de Hoteles Europeos
+# Análisis de Sentimientos - Reseñas de Hoteles Europeos
 
 **Seminario Complexivo - Grupo 3**
 
@@ -6,7 +6,7 @@ Análisis de Sentimiento y Extracción de Tópicos en Reseñas de Hoteles Europe
 
 ---
 
-## 👥 Integrantes
+## Integrantes
 
 - Matías Marcelo Mosquera Báez  
 - Francisco Javier Quinteros Andrade  
@@ -14,13 +14,13 @@ Análisis de Sentimiento y Extracción de Tópicos en Reseñas de Hoteles Europe
 
 ---
 
-## 🎯 Objetivos
+## Objetivos
 
 Construir un Dashboard interactivo que permita realizar una correcta distribución de sentimientos y facilitar la lectura de reseñas hechas por parte de los clientes a través de la plataforma de booking.com para la identificación de problemas más comunes o aspectos que generan más satisfacción.
 
 ---
 
-## 🚀 Inicio Rápido
+## Inicio Rápido
 
 ### Instalación
 
@@ -33,7 +33,7 @@ cd seminario_complexivo_grupo3
 pip install -r requirements.txt
 ```
 
-### Opción 1: Inicio Automático (Recomendado) 🆕
+### Opción 1: Inicio Automático (Recomendado) 
 
 ```powershell
 # Inicia API + Dashboard automáticamente
@@ -41,8 +41,8 @@ pip install -r requirements.txt
 ```
 
 Esto iniciará:
-- 🌐 API REST en http://localhost:8000
-- 📊 Dashboard en http://localhost:8501
+- API REST en http://localhost:8000
+- Dashboard en http://localhost:8501
 
 ### Opción 2: Uso Manual
 
@@ -68,15 +68,15 @@ streamlit run dashboard/app.py
 
 ---
 
-## 📂 Estructura del Proyecto
+## Estructura del Proyecto
 
 ```
 seminario_complexivo_grupo3/
-├── main.py                    # 🎯 Script principal
+├── main.py                    # Script principal
 ├── data/
 │   ├── Hotel_Reviews.csv     # Dataset original
 │   └── hotel_reviews_processed.csv
-├── scripts/                   # 📦 Módulos de procesamiento
+├── scripts/                   # Módulos de procesamiento
 │   ├── data_loader.py        # Carga de datos
 │   ├── data_cleaning.py      # Limpieza
 │   ├── data_processing.py    # Procesamiento general
@@ -84,11 +84,11 @@ seminario_complexivo_grupo3/
 │   ├── sentiment_analysis.py # Análisis VADER
 │   ├── topic_modeling.py     # Modelado LDA
 │   └── example_usage.py      # Ejemplos
-├── dashboard/                 # 📊 Dashboard web
-├── api_app.py                 # 🌐 API REST con FastAPI
-├── test_api.py                # 🧪 Tests de API
+├── dashboard/                 # Dashboard web
+├── api_app.py                 # API REST con FastAPI
+├── test_api.py                # Tests de API
 ├── dashboard_api_integration_example.py  # 🔗 Demo integración
-└── docs/                      # 📖 Documentación
+└── docs/                      # Documentación
 ```
 
 ---
@@ -97,31 +97,31 @@ seminario_complexivo_grupo3/
 
 El proyecto implementa un pipeline modular dividido en 4 fases:
 
-### Fase 1: 📥 Carga de Datos
+### Fase 1: Carga de Datos
 - Carga del dataset desde CSV
 - Opción de muestreo para pruebas rápidas
 - Manejo automático de encoding
 
-### Fase 2: 🧹 Limpieza de Datos
+### Fase 2: Limpieza de Datos
 - Validación de tipos de datos
 - Manejo de valores faltantes
 - Eliminación de duplicados
 - Limpieza y combinación de reseñas
 
-### Fase 3: 🔬 Análisis de Sentimientos
+### Fase 3: Análisis de Sentimientos
 - Análisis con VADER (Valence Aware Dictionary)
 - Procesamiento por bloques para grandes datasets
 - Clasificación: positivo, neutro, negativo
 - Modo streaming para bajo consumo de RAM
 
-### Fase 4: 🔍 Modelado de Tópicos (Opcional)
+### Fase 4: Modelado de Tópicos (Opcional)
 - Extracción de temas con LDA
 - Identificación de palabras clave
 - Asignación de tópicos dominantes
 
 ---
 
-## 💻 Comandos Disponibles
+## Comandos Disponibles
 
 ### Opciones Principales
 
@@ -155,36 +155,36 @@ python scripts/example_usage.py
 
 ---
 
-## 📊 Módulos del Proyecto
+## Módulos del Proyecto
 
-### 🔵 data_loader.py
+### data_loader.py
 Carga de datos desde archivos CSV.
 
-### 🟢 data_cleaning.py
+### data_cleaning.py
 - Limpieza de texto
 - Eliminación de duplicados
 - Manejo de valores faltantes
 - Validación de tipos
 
-### 🟡 data_processing.py
+### data_processing.py
 - Operaciones de I/O
 - Muestreo de datos
 - Estadísticas y resúmenes
 - Distribución de sentimientos
 
-### 🟣 text_processing.py
+### text_processing.py
 - Normalización de texto
 - Combinación de reseñas
 - Limpieza de espacios
 - Creación de columna unificada
 
-### 🔴 sentiment_analysis.py
+### sentiment_analysis.py
 - Análisis VADER
 - Procesamiento por bloques
 - Clasificación de sentimientos
 - Modo streaming
 
-### 🟠 topic_modeling.py
+### topic_modeling.py
 - Modelado LDA
 - Extracción de tópicos
 - Palabras clave
@@ -192,7 +192,7 @@ Carga de datos desde archivos CSV.
 
 ---
 
-## 📈 Dataset
+## Dataset
 
 **Fuente:** Reseñas de hoteles europeos de Booking.com
 
@@ -216,15 +216,15 @@ Carga de datos desde archivos CSV.
 
 ---
 
-## 📖 Documentación
+## Documentación
 
-- 📘 [Guía de Uso](docs/USAGE.md) - Instrucciones detalladas
-- 📗 [Estructura del Proyecto](docs/PROJECT_STRUCTURE.md) - Organización del código
-- 📙 [Refactorización](docs/REFACTORING.md) - Cambios y mejoras
+- [Guía de Uso](docs/USAGE.md) - Instrucciones detalladas
+- [Estructura del Proyecto](docs/PROJECT_STRUCTURE.md) - Organización del código
+- [Refactorización](docs/REFACTORING.md) - Cambios y mejoras
 
 ---
 
-## 🛠️ Requisitos
+## Requisitos
 
 ```
 pandas
@@ -240,7 +240,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🎓 Tecnologías Utilizadas
+## Tecnologías Utilizadas
 
 - **Python 3.8+** - Lenguaje principal
 - **Pandas** - Manipulación de datos
@@ -252,7 +252,7 @@ pip install -r requirements.txt
 
 ---
 
-## 🌐 API REST
+## API REST
 
 El proyecto incluye una **API REST completa** construida con FastAPI para análisis de reseñas:
 
@@ -310,7 +310,7 @@ python test_api.py
 
 ---
 
-## 📊 Dashboard
+## Dashboard
 
 El proyecto incluye un dashboard interactivo construido con Streamlit que permite:
 - Visualizar distribución de sentimientos
@@ -325,7 +325,7 @@ streamlit run app.py
 
 ---
 
-## 🤝 Contribución
+## Contribución
 
 Para contribuir al proyecto:
 
@@ -337,29 +337,29 @@ Para contribuir al proyecto:
 
 ---
 
-## 📝 Licencia
+## Licencia
 
 Este proyecto es parte de un trabajo académico para el Seminario Complexivo.
 
 ---
 
-## 📞 Contacto
+## Contacto
 
 **Repository:** [github.com/mattmosz/seminario_complexivo_grupo3](https://github.com/mattmosz/seminario_complexivo_grupo3)
 
 ---
 
-## ✨ Características Destacadas
+## Características Destacadas
 
-- ✅ Pipeline modular y reutilizable
-- ✅ API REST con FastAPI (análisis de reseñas en tiempo real)
-- ✅ Procesamiento eficiente de grandes datasets
-- ✅ Modo streaming para bajo consumo de RAM
-- ✅ Análisis de sentimientos con VADER
-- ✅ Modelado de tópicos con LDA
-- ✅ Documentación completa y tests automatizados
-- ✅ Ejemplos de uso incluidos
-- ✅ Dashboard interactivo con Streamlit
+- Pipeline modular y reutilizable
+- API REST con FastAPI (análisis de reseñas en tiempo real)
+- Procesamiento eficiente de grandes datasets
+- Modo streaming para bajo consumo de RAM
+- Análisis de sentimientos con VADER
+- Modelado de tópicos con LDA
+- Documentación completa y tests automatizados
+- Ejemplos de uso incluidos
+- Dashboard interactivo con Streamlit
 
 ---
 
